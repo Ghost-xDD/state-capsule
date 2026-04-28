@@ -1,0 +1,22 @@
+{
+  "name": "@state-capsule/spikes",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spike:axl": "tsx spike-axl.ts",
+    "spike:storage": "tsx spike-0g-storage.ts",
+    "spike:compute": "tsx spike-0g-compute.ts",
+    "spike:ens": "tsx spike-ens-subname.ts"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-ts-sdk": "^1.2.6",
+    "@namestone/namestone-sdk": "^0.1.0",
+    "ethers": "^6.13.0",
+    "openai": "^4.56.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}

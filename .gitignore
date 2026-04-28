@@ -1,0 +1,47 @@
+# Planning docs — internal only, not part of submission
+IMPLEMENTATION.md
+prd.md
+bounties.txt
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+
+# Foundry
+cache/
+out/
+broadcast/
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Replay transcripts with real API keys / sensitive prompts
+# (commit only golden transcripts explicitly)
+~/.state-capsule/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
