@@ -1,13 +1,12 @@
 /**
  * spike-0g-storage.ts
  *
- * De-risk: Confirm 0G Storage blob upload/download works end-to-end using
- * MemData + Indexer (the auto-discovered flow contract path).
+ * De-risk: Confirm 0G Storage blob upload AND KV write work end-to-end.
  *
- * KV (Batcher) is skipped — v1.2.6 SDK has a bug where Batcher internally
- * calls `this.flow.market()` which is not in the FixedPriceFlow ABI.
- * Capsule heads will use blob root hashes as the primary storage primitive;
- * KV can be added once the SDK bug is resolved upstream.
+ * SDK bug workaround (DL-001):
+ *   `new Batcher(1, nodes, FLOW_ADDRESS_STRING, rpc)` fails because Uploader
+ *   calls `this.flow.market()` expecting an ethers Contract, not a plain string.
+ *   Fix: pass `getFlowContract(address, signer)` as the third argument instead.
  *
  * Prerequisites:
  *   - OG_PRIVATE_KEY, OG_EVM_RPC, OG_INDEXER_RPC in .env
@@ -15,18 +14,13 @@
  *
  * Usage:
  *   tsx scripts/spikes/spike-0g-storage.ts
- *
- * What this proves:
- *   - MemData blob upload returns a content-addressed root hash
- *   - Root hash is stable (same data → same hash)
- *   - The root hash IS the capsule_id in our SDK design
  */
 
 import { config } from "dotenv";
 import { resolve } from "node:path";
 config({ path: resolve(import.meta.dirname, "../../.env"), override: true });
 
-import { Indexer, MemData } from "@0gfoundation/0g-ts-sdk";
+import { Indexer, MemData, Batcher, KvClient, getFlowContract } from "@0gfoundation/0g-ts-sdk";
 import { ethers } from "ethers";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -40,9 +34,14 @@ function requireEnv(key: string): string {
   return v;
 }
 
-const PRIVATE_KEY  = requireEnv("OG_PRIVATE_KEY");
-const EVM_RPC      = process.env["OG_EVM_RPC"]      ?? "https://evmrpc-testnet.0g.ai";
-const INDEXER_RPC  = process.env["OG_INDEXER_RPC"]  ?? "https://indexer-storage-testnet-turbo.0g.ai";
+const PRIVATE_KEY     = requireEnv("OG_PRIVATE_KEY");
+const EVM_RPC         = process.env["OG_EVM_RPC"]         ?? "https://evmrpc-testnet.0g.ai";
+const INDEXER_RPC     = process.env["OG_INDEXER_RPC"]     ?? "https://indexer-storage-testnet-turbo.0g.ai";
+const FLOW_CONTRACT   = process.env["OG_FLOW_CONTRACT"]   ?? "0x22E03a6A89B950F1c82ec5e74F8eCa321a105296";
+const KV_URL          = process.env["OG_KV_CLIENT_URL"]   ?? "http://178.238.236.119:6789";
+
+// Deterministic stream ID for state-capsule spike data
+const STREAM_ID = "0x" + "ab12".repeat(16);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -65,44 +64,35 @@ async function main() {
 
   const indexer = new Indexer(INDEXER_RPC);
 
-  // ── Part 1: Compute root hash (no network needed) ──────────────────────
+  // ── Part 1: Root hash determinism (no network) ──────────────────────────
 
   log("─── Part 1: Root hash (determinism check) ────────────────");
 
-  const taskId   = `spike-task-fixed`;   // fixed so hash is stable across runs
   const capsulePayload = JSON.stringify({
     capsule_id: "spike-capsule-v1",
-    task_id: taskId,
+    task_id: "spike-task-fixed",
     schema_version: "0.1.0",
-    goal: "Spike: prove blob upload works",
+    goal: "Spike: prove storage works",
     holder: "triager",
-    created_at: "2026-04-28T00:00:00.000Z", // fixed timestamp for determinism
+    created_at: "2026-04-28T00:00:00.000Z",
   });
 
-  const data1 = new TextEncoder().encode(capsulePayload);
-  const mem1  = new MemData(data1);
-  const [tree1, err1] = await mem1.merkleTree();
-  if (err1) fail(`merkleTree (run 1): ${err1}`);
+  const [tree1] = await new MemData(new TextEncoder().encode(capsulePayload)).merkleTree();
+  const [tree2] = await new MemData(new TextEncoder().encode(capsulePayload)).merkleTree();
   const rootHash1 = tree1?.rootHash();
-  log(`Root hash (run 1): ${rootHash1}`);
-
-  // Same data → same hash
-  const mem2  = new MemData(new TextEncoder().encode(capsulePayload));
-  const [tree2, err2] = await mem2.merkleTree();
-  if (err2) fail(`merkleTree (run 2): ${err2}`);
   const rootHash2 = tree2?.rootHash();
-  log(`Root hash (run 2): ${rootHash2}`);
 
   if (rootHash1 !== rootHash2) fail("root hash is not deterministic!");
+  log(`Root hash: ${rootHash1}`);
   log("Root hash determinism ✅");
 
-  // ── Part 2: Upload blob to 0G Storage ──────────────────────────────────
+  // ── Part 2: Blob upload via Indexer ────────────────────────────────────
 
   log("─── Part 2: Blob upload ───────────────────────────────────");
 
   const logEntry = JSON.stringify({
     seq: 0,
-    task_id: taskId,
+    task_id: "spike-task-fixed",
     event: "capsule_created",
     holder: "triager",
     timestamp: new Date().toISOString(),
@@ -110,40 +100,75 @@ async function main() {
 
   const uploadData = new TextEncoder().encode(logEntry);
   const memData    = new MemData(uploadData);
-
-  const [tree, treeErr] = await memData.merkleTree();
-  if (treeErr) fail(`merkleTree: ${treeErr}`);
-  const rootHash = tree?.rootHash();
-  log(`Computed root hash : ${rootHash}`);
-  log(`Payload size       : ${uploadData.byteLength} bytes`);
-  log("Uploading to 0G Storage (may take 10-30s)...");
+  const [blobTree] = await memData.merkleTree();
+  const blobRoot   = blobTree?.rootHash();
+  log(`Blob root hash : ${blobRoot}`);
+  log("Uploading blob (may take 10-30s)...");
 
   const t0 = Date.now();
   const [tx, uploadErr] = await indexer.upload(memData, EVM_RPC, signer);
   if (uploadErr) fail(`upload: ${uploadErr}`);
+  const blobElapsed = Date.now() - t0;
+  const blobTxHash = tx && "txHash" in tx ? tx.txHash : "(fragmented)";
+  log(`Blob upload ok (${blobElapsed}ms) tx: ${blobTxHash} ✅`);
 
-  const elapsed = Date.now() - t0;
-  const txHash = tx && "txHash" in tx ? tx.txHash : "(fragmented)";
-  log(`Upload ok (${elapsed}ms) — tx: ${txHash}`);
-  log(`Content-addressed root hash: ${rootHash}`);
+  // ── Part 3: KV write via Batcher (fixed) ───────────────────────────────
+
+  log("─── Part 3: KV write (Batcher + getFlowContract fix) ─────");
+  log("Workaround: pass getFlowContract(addr, signer) instead of raw address");
+
+  // Fix: construct the flow contract with a signer before passing to Batcher
+  const flowContract = getFlowContract(FLOW_CONTRACT, signer);
+  log(`flow.market callable: ${typeof flowContract.market === "function" ? "yes ✅" : "no ❌"}`);
+
+  const [nodes, nodesErr] = await indexer.selectNodes(1);
+  if (nodesErr) fail(`selectNodes: ${nodesErr}`);
+
+  const batcher = new Batcher(1, nodes, flowContract, EVM_RPC);
+
+  const taskId  = `kv-spike-${Date.now()}`;
+  const keyBytes = Uint8Array.from(Buffer.from(taskId, "utf-8"));
+  const valBytes = Uint8Array.from(Buffer.from(JSON.stringify({
+    capsule_id: `capsule-${Date.now()}`,
+    task_id: taskId,
+    holder: "triager",
+    ts: new Date().toISOString(),
+  }), "utf-8"));
+
+  batcher.streamDataBuilder.set(STREAM_ID, keyBytes, valBytes);
+
+  log(`KV stream ID : ${STREAM_ID}`);
+  log(`KV key       : ${taskId}`);
+  log("Calling batcher.exec() (may take 10-30s)...");
+
+  const t1 = Date.now();
+  const [kvTx, kvErr] = await batcher.exec();
+  if (kvErr) fail(`batcher.exec: ${kvErr}`);
+  const kvElapsed = Date.now() - t1;
+  log(`KV write ok (${kvElapsed}ms) tx: ${(kvTx as any).txHash} ✅`);
 
   // ── Summary ──────────────────────────────────────────────────────────────
 
   console.log(`
 ✅  0G Storage spike PASSED
 
-  Wallet      : ${address}
-  Indexer     : ${INDEXER_RPC}
-  Root hash   : ${rootHash}
-  Upload tx   : ${txHash}
-  Upload time : ${elapsed}ms
+  Wallet        : ${address}
+  Blob root hash: ${blobRoot}
+  Blob upload tx: ${blobTxHash} (${blobElapsed}ms)
+  KV write tx   : ${(kvTx as any).txHash} (${kvElapsed}ms)
+  KV stream ID  : ${STREAM_ID}
+  KV key        : ${taskId}
 
   Proven:
-    ✅  MemData blob upload works end-to-end (flow contract auto-discovered)
-    ✅  Root hash is deterministic — same payload always → same hash
-    ✅  Root hash = content-addressed capsule_id in our SDK design
-    ⚠️  KV Batcher skipped (SDK v1.2.6 bug: flow.market() not in ABI)
-        → capsule heads stored as latest blob root hash instead
+    ✅  MemData blob upload works (flow contract auto-discovered by Indexer)
+    ✅  Root hash is deterministic — same payload → same hash
+    ✅  KV Batcher works with getFlowContract(addr, signer) fix
+    ✅  Both primitives confirmed on Galileo testnet
+
+  SDK bug (DL-001 resolved):
+    Batcher 3rd arg must be getFlowContract(addr, signer), NOT a raw address string.
+    The Uploader expects an ethers Contract object to call flow.market().
+    Fix is one line — no SDK patch needed.
 `);
 }
 
