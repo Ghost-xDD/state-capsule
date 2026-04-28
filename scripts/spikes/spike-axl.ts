@@ -18,6 +18,10 @@
  *   - Round-trip latency is within acceptable range for the demo
  */
 
+import { config } from "dotenv";
+import { resolve } from "node:path";
+config({ path: resolve(import.meta.dirname, "../../.env"), override: true });
+
 import { execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

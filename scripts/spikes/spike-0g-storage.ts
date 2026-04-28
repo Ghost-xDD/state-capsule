@@ -16,6 +16,10 @@
  *   - That root hash can be used to reconstruct the data (Log primitive)
  */
 
+import { config } from "dotenv";
+import { resolve } from "node:path";
+config({ path: resolve(import.meta.dirname, "../../.env"), override: true });
+
 import { Indexer, MemData, Batcher, KvClient } from "@0gfoundation/0g-ts-sdk";
 import { ethers } from "ethers";
 

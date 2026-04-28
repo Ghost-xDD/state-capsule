@@ -30,6 +30,10 @@
  *   - We understand the attestation shape for verifyHandoff() in the SDK
  */
 
+import { config } from "dotenv";
+import { resolve } from "node:path";
+config({ path: resolve(import.meta.dirname, "../../.env"), override: true });
+
 import OpenAI from "openai";
 
 // ── Config ──────────────────────────────────────────────────────────────────

@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "@0gfoundation/0g-ts-sdk": "^1.2.6",
-    "@namestone/namestone-sdk": "^0.1.0",
+    "@namestone/namestone-sdk": "^0.2.15",
+    "dotenv": "^16.4.0",
     "ethers": "^6.13.0",
-    "openai": "^4.56.0"
+    "openai": "^4.56.0",
+    "viem": "^2.21.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

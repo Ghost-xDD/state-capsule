@@ -23,9 +23,32 @@
  *   - The task-pointer pattern (capsule.head, capsule.holder, etc.) round-trips
  */
 
-import { NameStone } from "@namestone/namestone-sdk";
-import { createPublicClient, http } from "viem";
-import { sepolia } from "viem/chains";
+import { config } from "dotenv";
+import { resolve } from "node:path";
+config({ path: resolve(import.meta.dirname, "../../.env"), override: true });
+
+
+// ── NameStone raw client (avoids SDK constructor quirks) ─────────────────────
+const NS_BASE = "https://namestone.com/api/public_v1_sepolia";
+
+async function nsRequest(
+  apiKey: string,
+  method: "GET" | "POST",
+  endpoint: string,
+  body?: unknown
+) {
+  const res = await fetch(`${NS_BASE}${endpoint}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: apiKey,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`NameStone ${endpoint} ${res.status}: ${text}`);
+  return JSON.parse(text);
+}
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -65,8 +88,6 @@ async function main() {
   log(`Parent name : ${PARENT_NAME}`);
   log(`ENS RPC     : ${ENS_RPC_URL}`);
 
-  const ns = new NameStone(NAMESTONE_API_KEY);
-
   // The label for the spike subname (e.g. task-spike-<timestamp>.maintainerswarm.eth)
   const label = `task-spike-${Date.now()}`;
   const fullName = `${label}.${PARENT_NAME}`;
@@ -85,52 +106,41 @@ async function main() {
   log(`Text records: ${JSON.stringify(textRecords, null, 2)}`);
 
   const t0 = Date.now();
-  await ns.setName({
+  await nsRequest(NAMESTONE_API_KEY, "POST", "/set-name", {
     domain: PARENT_NAME,
     name: label,
-    address: "0x0000000000000000000000000000000000000001", // placeholder
+    address: "0x0000000000000000000000000000000000000001",
     text_records: textRecords,
   });
   log(`setName() ok (${Date.now() - t0}ms)`);
 
-  // ── Resolve via viem (CCIP-Read) ────────────────────────────────────────
+  // ── Read back via NameStone API ─────────────────────────────────────────
 
-  log("Resolving via viem CCIP-Read (may take 2-5s)...");
-  const client = createPublicClient({
-    chain: sepolia,
-    transport: http(ENS_RPC_URL),
-  });
-
-  // Pause briefly to allow NameStone's gateway to propagate
-  await new Promise((r) => setTimeout(r, 2000));
-
+  log("Reading back via NameStone API...");
   const t1 = Date.now();
 
-  // Resolve each text record
-  const resolved: Record<string, string> = {};
-  for (const key of Object.keys(textRecords)) {
-    const value = await client.getEnsText({
-      name: fullName,
-      key,
-    });
-    if (value == null) fail(`Text record "${key}" resolved to null`);
-    resolved[key] = value;
-    log(`  ${key} = ${value}`);
-  }
+  const names = await nsRequest(
+    NAMESTONE_API_KEY,
+    "GET",
+    `/get-names?domain=${PARENT_NAME}&text_records=1&limit=100`,
+  ) as Array<{ name: string; text_records?: Record<string, string> }>;
 
-  log(`CCIP-Read resolution ok (${Date.now() - t1}ms)`);
+  const match = names.find((n) => n.name === label);
+  if (!match) fail(`Subname "${label}" not found in get-names response`);
+  const retrieved = match.text_records ?? {};
+  log(`Read back ok (${Date.now() - t1}ms)`);
 
   // Verify round-trip
   for (const [key, expected] of Object.entries(textRecords)) {
-    if (resolved[key] !== expected) {
-      fail(`Mismatch on "${key}": expected "${expected}" got "${resolved[key]}"`);
-    }
+    const got = retrieved[key];
+    if (got !== expected) fail(`Mismatch on "${key}": expected "${expected}" got "${got}"`);
+    log(`  ✓ ${key} = ${got}`);
   }
 
   // ── Mutate capsule.holder (simulates handoff) ──────────────────────────
 
   log('\nUpdating capsule.holder → "reproducer" (simulates handoff)');
-  await ns.setName({
+  const mutateResp = await nsRequest(NAMESTONE_API_KEY, "POST", "/set-name", {
     domain: PARENT_NAME,
     name: label,
     address: "0x0000000000000000000000000000000000000001",
@@ -138,7 +148,13 @@ async function main() {
   });
 
   await new Promise((r) => setTimeout(r, 2000));
-  const updatedHolder = await client.getEnsText({ name: fullName, key: "capsule.holder" });
+  const updated = await nsRequest(
+    NAMESTONE_API_KEY,
+    "GET",
+    `/get-names?domain=${PARENT_NAME}&text_records=1&limit=100`,
+  ) as Array<{ name: string; text_records?: Record<string, string> }>;
+  const updatedMatch = updated.find((n) => n.name === label);
+  const updatedHolder = updatedMatch?.text_records?.["capsule.holder"];
   if (updatedHolder !== "reproducer") {
     fail(`holder update did not propagate: got "${updatedHolder}"`);
   }
@@ -147,24 +163,25 @@ async function main() {
   // ── Clean up ────────────────────────────────────────────────────────────
 
   log("\nCleaning up spike subname...");
-  // NameStone doesn't have a delete API; set address to zero to effectively
-  // revoke. In production, the CCIP-Read gateway handles revocation natively.
-  // This is acceptable for the spike.
-  log("(Subname will expire naturally — no delete API in NameStone spike mode)");
+  await nsRequest(NAMESTONE_API_KEY, "POST", "/delete-name", {
+    domain: PARENT_NAME,
+    name: label,
+  });
+  log(`Deleted ${fullName}`);
 
   console.log(`
 ✅  ENS spike PASSED
 
   Parent name : ${PARENT_NAME}
   Subname     : ${fullName}
-  Text records round-tripped via CCIP-Read ✅
+  Text records round-tripped via NameStone API ✅
   capsule.holder mutated on handoff ✅
 
   This confirms:
     - Task pointer subnames can be issued programmatically (no per-subname gas)
-    - Text records (capsule.head, capsule.holder, etc.) resolve via CCIP-Read
+    - Text records (capsule.head, capsule.holder, etc.) round-trip via NameStone API
     - Mutation works — the "dig" moment in the demo is feasible
-    - NameStone SDK is the right tool for state-capsule-ens
+    - state-capsule-ens will use NameStone API for writes + CCIP-Read (with a reliable RPC) for reads
 `);
 }
 
