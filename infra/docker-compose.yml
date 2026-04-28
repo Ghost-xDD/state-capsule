@@ -1,0 +1,86 @@
+## MaintainerSwarm — 4-node AXL docker-compose
+##
+## Prerequisites:
+##   - AXL binary built at ../axl/node (cd ../axl && make build)
+##   - Keys generated per node: see infra/README.md
+##   - .env at repo root populated
+##
+## Usage:
+##   docker compose -f infra/docker-compose.yml up
+##   docker compose -f infra/docker-compose.yml kill reproducer   # demo kill
+##   docker compose -f infra/docker-compose.yml up -d reproducer  # demo resume
+
+x-axl-base: &axl-base
+  build:
+    context: .
+    dockerfile: Dockerfile.agent
+  env_file: ../.env
+  restart: "no"
+
+services:
+  triager:
+    <<: *axl-base
+    container_name: mswarm-triager
+    environment:
+      AGENT_ROLE: triager
+      AXL_API_PORT: "9101"
+      AXL_LISTEN_PORT: "9111"
+    volumes:
+      - ./keys/triager.pem:/app/private.pem:ro
+      - ./axl/triager-config.json:/app/axl-config.json:ro
+    ports:
+      - "9101:9101"
+      - "9111:9111"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9101/topology"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+
+  reproducer:
+    <<: *axl-base
+    container_name: mswarm-reproducer
+    environment:
+      AGENT_ROLE: reproducer
+      AXL_API_PORT: "9102"
+    volumes:
+      - ./keys/reproducer.pem:/app/private.pem:ro
+      - ./axl/reproducer-config.json:/app/axl-config.json:ro
+    ports:
+      - "9102:9102"
+    depends_on:
+      triager:
+        condition: service_healthy
+    # Reproducer runs untrusted code — add seccomp/apparmor here in production
+    security_opt:
+      - no-new-privileges:true
+
+  patcher:
+    <<: *axl-base
+    container_name: mswarm-patcher
+    environment:
+      AGENT_ROLE: patcher
+      AXL_API_PORT: "9103"
+    volumes:
+      - ./keys/patcher.pem:/app/private.pem:ro
+      - ./axl/patcher-config.json:/app/axl-config.json:ro
+    ports:
+      - "9103:9103"
+    depends_on:
+      triager:
+        condition: service_healthy
+
+  reviewer:
+    <<: *axl-base
+    container_name: mswarm-reviewer
+    environment:
+      AGENT_ROLE: reviewer
+      AXL_API_PORT: "9104"
+    volumes:
+      - ./keys/reviewer.pem:/app/private.pem:ro
+      - ./axl/reviewer-config.json:/app/axl-config.json:ro
+    ports:
+      - "9104:9104"
+    depends_on:
+      triager:
+        condition: service_healthy
