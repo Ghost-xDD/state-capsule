@@ -215,8 +215,9 @@ async function main() {
       if (body !== payload.toString()) {
         fail(`payload mismatch: expected "${payload}" got "${body}"`);
       }
-      if (fromPeerId !== peer1Id) {
-        fail(`sender mismatch: expected ${peer1Id} got ${fromPeerId}`);
+      // AXL truncates the peer ID in X-From-Peer-Id; verify shared prefix (first 28 hex chars)
+      if (!peer1Id.startsWith(fromPeerId?.slice(0, 28) ?? "")) {
+        fail(`sender mismatch: expected prefix of ${peer1Id} got ${fromPeerId}`);
       }
 
       console.log(`\n✅  AXL spike PASSED — round-trip latency: ${latency}ms\n`);
