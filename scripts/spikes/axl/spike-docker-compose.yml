@@ -1,0 +1,40 @@
+## Spike-only docker-compose: 2 AXL nodes for the round-trip smoke test.
+## Requires the AXL binary to be pre-built at ../../axl/node
+## Usage: docker compose -f scripts/spikes/axl/spike-docker-compose.yml up
+
+services:
+  axl-node1:
+    image: golang:1.25-alpine
+    working_dir: /axl
+    volumes:
+      - ../../../axl:/axl:ro
+      - ./node1-config.json:/etc/axl/config.json:ro
+      - ./node1-key.pem:/etc/axl/private.pem:ro
+    command: sh -c "cd /axl && go build -o /tmp/axl . && /tmp/axl -config /etc/axl/config.json"
+    ports:
+      - "9201:9201"  # HTTP API
+      - "9211:9211"  # AXL listen
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9201/topology"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  axl-node2:
+    image: golang:1.25-alpine
+    working_dir: /axl
+    volumes:
+      - ../../../axl:/axl:ro
+      - ./node2-config.json:/etc/axl/config.json:ro
+      - ./node2-key.pem:/etc/axl/private.pem:ro
+    command: sh -c "cd /axl && go build -o /tmp/axl . && /tmp/axl -config /etc/axl/config.json"
+    ports:
+      - "9202:9202"  # HTTP API
+    depends_on:
+      axl-node1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9202/topology"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
