@@ -24,7 +24,7 @@ import {
   type CapsuleEnvelope,
   type CapsuleAnnounce,
 } from "@state-capsule/sdk";
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -312,24 +312,50 @@ export class AgentRuntime {
       `[${this.config.role}] ✅ capsule updated → ${updated.capsule_id.slice(0, 10)}...`
     );
 
-    // Broadcast via GossipSub
-    if (this.gossip) {
-      const announce: CapsuleAnnounce = {
-        task_id:    updated.task_id,
-        capsule_id: updated.capsule_id,
-        holder:     this.config.role,
-        log_root:   updated.log_root,
-        timestamp:  new Date().toISOString(),
-      };
-      await this.gossip.publish(CAPSULE_TOPIC, new TextEncoder().encode(JSON.stringify(announce)));
-    }
+    // Broadcast final update via GossipSub.
+    await this._broadcastUpdate(updated);
 
     // Forward handoff to next role via /send
     if (result.next_holder) {
       await this._forwardHandoff(updated, result.next_holder);
     } else {
       console.log(`[${this.config.role}] 🏁 pipeline complete for task ${updated.task_id}`);
+      // Clean up the task-ref so the next boot doesn't re-trigger.
+      this._clearTaskRef();
     }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  private async _broadcastUpdate(capsule: Capsule): Promise<void> {
+    if (!this.gossip) return;
+    const announce: CapsuleAnnounce = {
+      task_id:    capsule.task_id,
+      capsule_id: capsule.capsule_id,
+      holder:     this.config.role,
+      log_root:   capsule.log_root,
+      timestamp:  new Date().toISOString(),
+    };
+    await this.gossip.publish(
+      CAPSULE_TOPIC,
+      new TextEncoder().encode(JSON.stringify(announce)),
+    );
+  }
+
+  /** Persist active task_id to the shared /peers volume for on-boot recovery. */
+  private _writeTaskRef(taskId: string): void {
+    const peersDir = process.env["PEERS_DIR"] ?? "/peers";
+    try {
+      writeFileSync(`${peersDir}/${this.config.role}-task`, taskId, "utf8");
+    } catch { /* non-fatal: /peers might not exist in unit tests */ }
+  }
+
+  /** Remove the task-ref file once the pipeline stage is fully complete. */
+  private _clearTaskRef(): void {
+    const peersDir = process.env["PEERS_DIR"] ?? "/peers";
+    try {
+      unlinkSync(`${peersDir}/${this.config.role}-task`);
+    } catch { /* file may not exist */ }
   }
 
   private async _forwardHandoff(capsule: Capsule, nextRole: AgentRole): Promise<void> {
@@ -339,7 +365,6 @@ export class AgentRuntime {
     if (!nextPeerId) {
       const peersDir = process.env["PEERS_DIR"] ?? "/peers";
       try {
-        const { readFileSync } = await import("node:fs");
         const id = readFileSync(`${peersDir}/${nextRole}`, "utf8").trim();
         if (id) {
           nextPeerId = id;
