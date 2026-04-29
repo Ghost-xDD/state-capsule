@@ -1,0 +1,19 @@
+{
+  "name": "@state-capsule/maintainer-swarm",
+  "version": "0.1.0",
+  "description": "MaintainerSwarm — 4-agent demo for State Capsule",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "seed": "node dist/scripts/seed-task.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@state-capsule/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
