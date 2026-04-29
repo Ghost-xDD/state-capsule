@@ -1,0 +1,18 @@
+{
+  "name": "@state-capsule/contracts",
+  "version": "0.1.0",
+  "description": "CapsuleRegistry smart contract — on-chain anchor for State Capsule",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network zerog",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "hardhat": "^2.22.0",
+    "typescript": "^5.5.0"
+  }
+}
