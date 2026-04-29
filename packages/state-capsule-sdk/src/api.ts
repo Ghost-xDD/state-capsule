@@ -2,7 +2,7 @@
  * api.ts — Core SDK surface.
  *
  * createCapsule   → genesis capsule for a new task
- * updateCapsule   → extend a capsule chain with new state
+ * updateCapsule   → extend a capsule chain with new state, anchored on-chain
  * restoreCapsule  → fetch + verify the latest capsule for a task_id
  *                   (works in a process that has never seen the task)
  * verifyHandoff   → verify the full signature chain from genesis to tip
@@ -21,8 +21,14 @@ import {
 import { type StorageAdapter, createStorage, createMemoryStorage } from "./storage.js";
 import { migrateCapsule } from "./migrations.js";
 import { SCHEMA_VERSION } from "./schema.js";
+import {
+  ChainAnchor,
+  isStaleParentError,
+  taskIdToBytes32,
+  type ChainConfig,
+} from "./chain.js";
 
-// ── SDK client ────────────────────────────────────────────────────────────────
+// ── SDK config ────────────────────────────────────────────────────────────────
 
 export interface StateCapsuleConfig {
   /**
@@ -32,8 +38,7 @@ export interface StateCapsuleConfig {
   privateKey?: string;
 
   /**
-   * 0G storage config. If omitted, falls back to in-memory storage
-   * (useful for unit tests that don't need real 0G).
+   * 0G Storage config. If omitted, falls back to in-memory storage.
    */
   storage?: ZeroGConfig;
 
@@ -41,24 +46,17 @@ export interface StateCapsuleConfig {
    * Pass an explicit StorageAdapter to override the default (testing).
    */
   storageAdapter?: StorageAdapter;
+
+  /**
+   * On-chain anchor config. If omitted, anchor calls are skipped
+   * (useful for unit tests and offline usage).
+   */
+  chain?: ChainConfig;
 }
 
 export interface CreateCapsuleInput {
-  task_id:         string;
-  goal:            string;
-  holder:          string;
-  facts?:          string[];
-  constraints?:    string[];
-  decisions?:      string[];
-  pending_actions?: string[];
-  next_action?:    string;
-  counterparties?: string[];
-  task_pointer?:   string;
-}
-
-export interface UpdateCapsuleInput {
   task_id:          string;
-  parent_capsule_id: string;
+  goal:             string;
   holder:           string;
   facts?:           string[];
   constraints?:     string[];
@@ -66,8 +64,21 @@ export interface UpdateCapsuleInput {
   pending_actions?: string[];
   next_action?:     string;
   counterparties?:  string[];
-  log_root?:        string | null;
   task_pointer?:    string;
+}
+
+export interface UpdateCapsuleInput {
+  task_id:           string;
+  parent_capsule_id: string;
+  holder:            string;
+  facts?:            string[];
+  constraints?:      string[];
+  decisions?:        string[];
+  pending_actions?:  string[];
+  next_action?:      string;
+  counterparties?:   string[];
+  log_root?:         string | null;
+  task_pointer?:     string;
 }
 
 // KV key for the latest capsule blob hash
@@ -86,6 +97,7 @@ export class StateCapsule {
   private adapter:    StorageAdapter;
   private privateKey: Uint8Array;
   private publicKey:  Uint8Array;
+  private chain:      ChainAnchor | null;
 
   constructor(config: StateCapsuleConfig = {}) {
     // Private key
@@ -105,6 +117,9 @@ export class StateCapsule {
     } else {
       this.adapter = createMemoryStorage();
     }
+
+    // On-chain anchor (optional)
+    this.chain = config.chain ? new ChainAnchor(config.chain) : null;
   }
 
   get publicKeyHex(): string {
@@ -116,7 +131,6 @@ export class StateCapsule {
   async createCapsule(input: CreateCapsuleInput): Promise<Capsule> {
     const now = new Date().toISOString();
 
-    // Build signable payload (no capsule_id or signature yet)
     const signable = {
       task_id:           input.task_id,
       schema_version:    SCHEMA_VERSION,
@@ -135,19 +149,80 @@ export class StateCapsule {
       ...(input.task_pointer ? { task_pointer: input.task_pointer } : {}),
     };
 
-    const capsule_id = await deriveCapsuleId(signable);
+    const capsule_id    = await deriveCapsuleId(signable);
     const signableWithId = { ...signable, capsule_id };
-    const signature  = signCapsule(signableWithId, this.privateKey);
+    const signature     = signCapsule(signableWithId, this.privateKey);
+    const capsule       = CapsuleSchema.parse({ ...signableWithId, signature });
 
-    const capsule = CapsuleSchema.parse({ ...signableWithId, signature });
     await this._persist(capsule);
+
+    // Anchor genesis on-chain (parent = zero hash)
+    if (this.chain) {
+      const ZERO = "0x" + "00".repeat(32);
+      await this.chain.anchor(
+        taskIdToBytes32(capsule.task_id),
+        ZERO,
+        capsule.capsule_id,
+        capsule.log_root ?? ZERO,
+      );
+    }
+
     return capsule;
   }
 
   // ── updateCapsule ──────────────────────────────────────────────────────────
 
   async updateCapsule(input: UpdateCapsuleInput): Promise<Capsule> {
-    // Fetch current head to inherit immutable fields
+    const capsule = await this._buildUpdate(input);
+    await this._persist(capsule);
+    await this._anchorWithRebase(capsule);
+    return capsule;
+  }
+
+  // ── restoreCapsule ─────────────────────────────────────────────────────────
+
+  /**
+   * Restore the latest capsule for a task. Works in a fresh process with no
+   * prior in-memory state — reads head from 0G KV, fetches blob by root hash.
+   */
+  async restoreCapsule(task_id: string): Promise<Capsule> {
+    const headBytes = await this.adapter.kvGet(kvKey(task_id));
+    if (!headBytes) {
+      throw new Error(`No capsule found for task_id: ${task_id}`);
+    }
+    const rootHash = new TextDecoder().decode(headBytes);
+    const blobBytes = await this.adapter.blobRead(rootHash);
+    const raw = JSON.parse(new TextDecoder().decode(blobBytes)) as Record<string, unknown>;
+    return CapsuleSchema.parse(migrateCapsule(raw));
+  }
+
+  // ── verifyHandoff ──────────────────────────────────────────────────────────
+
+  /**
+   * Verify the full ed25519 signature chain and parent linkage.
+   * Pass capsules in order from genesis (index 0) to tip.
+   */
+  async verifyHandoff(chain: Capsule[]): Promise<boolean> {
+    if (chain.length === 0) return false;
+
+    for (const capsule of chain) {
+      const { signature, ...signable } = capsule;
+      if (!verifyCapsuleSignature(signable, signature, capsule.created_by)) return false;
+    }
+
+    for (let i = 1; i < chain.length; i++) {
+      const prev = chain[i - 1];
+      const curr = chain[i];
+      if (!prev || !curr) return false;
+      if (curr.parent_capsule_id !== prev.capsule_id) return false;
+    }
+
+    return true;
+  }
+
+  // ── Internal helpers ───────────────────────────────────────────────────────
+
+  private async _buildUpdate(input: UpdateCapsuleInput): Promise<Capsule> {
     const head = await this.restoreCapsule(input.task_id);
     const now  = new Date().toISOString();
 
@@ -173,91 +248,76 @@ export class StateCapsule {
         : {}),
     };
 
-    const capsule_id = await deriveCapsuleId(signable);
+    const capsule_id    = await deriveCapsuleId(signable);
     const signableWithId = { ...signable, capsule_id };
-    const signature  = signCapsule(signableWithId, this.privateKey);
-
-    const capsule = CapsuleSchema.parse({ ...signableWithId, signature });
-    await this._persist(capsule);
-    return capsule;
+    const signature     = signCapsule(signableWithId, this.privateKey);
+    return CapsuleSchema.parse({ ...signableWithId, signature });
   }
-
-  // ── restoreCapsule ─────────────────────────────────────────────────────────
-
-  /**
-   * Restore the latest capsule for a task. Works in a fresh process with no
-   * prior in-memory state — reads head from 0G KV, fetches blob by root hash.
-   */
-  async restoreCapsule(task_id: string): Promise<Capsule> {
-    // 1. Read the current head blob hash from KV
-    const headBytes = await this.adapter.kvGet(kvKey(task_id));
-    if (!headBytes) {
-      throw new Error(`No capsule found for task_id: ${task_id}`);
-    }
-    const rootHash = new TextDecoder().decode(headBytes);
-
-    // 2. Fetch the blob
-    const blobBytes = await this.adapter.blobRead(rootHash);
-    const raw = JSON.parse(new TextDecoder().decode(blobBytes)) as Record<string, unknown>;
-
-    // 3. Migrate if needed
-    const migrated = migrateCapsule(raw);
-
-    // 4. Validate schema
-    return CapsuleSchema.parse(migrated);
-  }
-
-  // ── verifyHandoff ──────────────────────────────────────────────────────────
-
-  /**
-   * Verify the signature chain from genesis (parent_capsule_id=null) to the
-   * given capsule. Returns true only if every capsule in the chain has a valid
-   * signature. Does NOT re-fetch — requires all capsule objects to be provided.
-   *
-   * For a full chain verification from storage, fetch each capsule in the chain
-   * via its blob hash and pass them here in order (genesis first).
-   */
-  async verifyHandoff(chain: Capsule[]): Promise<boolean> {
-    if (chain.length === 0) return false;
-
-    for (const capsule of chain) {
-      const { signature, ...signable } = capsule;
-      const valid = verifyCapsuleSignature(signable, signature, capsule.created_by);
-      if (!valid) return false;
-    }
-
-    // Verify parent_capsule_id linkage
-    for (let i = 1; i < chain.length; i++) {
-      const prev = chain[i - 1];
-      const curr = chain[i];
-      if (!prev || !curr) return false;
-      if (curr.parent_capsule_id !== prev.capsule_id) return false;
-    }
-
-    return true;
-  }
-
-  // ── Internal helpers ───────────────────────────────────────────────────────
 
   private async _persist(capsule: Capsule): Promise<void> {
-    const encoded = new TextEncoder().encode(JSON.stringify(capsule));
-
-    // Write blob (immutable)
+    const encoded  = new TextEncoder().encode(JSON.stringify(capsule));
     const rootHash = await this.adapter.blobWrite(encoded);
 
-    // Update KV head pointer: task_id → rootHash
     await this.adapter.kvSet(kvKey(capsule.task_id), new TextEncoder().encode(rootHash));
 
-    // Append to chain log: task_id → [...previous_ids, capsule_id]
     const existing = await this.adapter.kvGet(kvChainKey(capsule.task_id));
     const chain: string[] = existing
-      ? JSON.parse(new TextDecoder().decode(existing)) as string[]
+      ? (JSON.parse(new TextDecoder().decode(existing)) as string[])
       : [];
     chain.push(capsule.capsule_id);
     await this.adapter.kvSet(
       kvChainKey(capsule.task_id),
-      new TextEncoder().encode(JSON.stringify(chain))
+      new TextEncoder().encode(JSON.stringify(chain)),
     );
+  }
+
+  /**
+   * Anchor on-chain. On StaleParent revert, rebase once and retry.
+   * On second collision, throws.
+   */
+  private async _anchorWithRebase(capsule: Capsule): Promise<void> {
+    if (!this.chain) return;
+
+    const ZERO   = "0x" + "00".repeat(32);
+    const logRoot = capsule.log_root ?? ZERO;
+    const taskB32 = taskIdToBytes32(capsule.task_id);
+
+    try {
+      await this.chain.anchor(
+        taskB32,
+        capsule.parent_capsule_id ?? ZERO,
+        capsule.capsule_id,
+        logRoot,
+      );
+    } catch (err) {
+      if (!isStaleParentError(err)) throw err;
+
+      // Rebase: re-read the on-chain head and re-build our capsule on top
+      const onChainHead = await this.chain.head(taskB32);
+      const rebased = await this._buildUpdate({
+        task_id:           capsule.task_id,
+        parent_capsule_id: onChainHead.capsuleId,
+        holder:            capsule.holder,
+        facts:             capsule.facts,
+        constraints:       capsule.constraints,
+        decisions:         capsule.decisions,
+        pending_actions:   capsule.pending_actions,
+        next_action:       capsule.next_action,
+        counterparties:    capsule.counterparties,
+        log_root:          capsule.log_root,
+        ...(capsule.task_pointer ? { task_pointer: capsule.task_pointer } : {}),
+      });
+
+      await this._persist(rebased);
+
+      // Second attempt — throw on collision, do not retry infinitely
+      await this.chain.anchor(
+        taskB32,
+        rebased.parent_capsule_id ?? ZERO,
+        rebased.capsule_id,
+        rebased.log_root ?? ZERO,
+      );
+    }
   }
 }
 
