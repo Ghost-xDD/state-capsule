@@ -2,25 +2,22 @@
 ##
 ## Prerequisites:
 ##   bash infra/gen-keys.sh
+##   bash infra/build-axl-linux.sh   (builds infra/bin/axl)
 ##   pnpm build (from repo root)
-##   AXL binary already built at path set by AXL_BINARY_PATH in .env
 ##
 ## Usage:
 ##   docker compose -f infra/docker-compose.yml up
 ##   docker compose -f infra/docker-compose.yml kill reproducer   # demo kill
 ##   docker compose -f infra/docker-compose.yml up -d reproducer  # demo resume
 
-x-axl-base: &axl-base
-  build:
-    context: ..
-    dockerfile: infra/Dockerfile.agent
-  env_file: ../.env
-  restart: "no"
-
 services:
   triager:
-    <<: *axl-base
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.agent
     container_name: mswarm-triager
+    env_file: ../.env
+    restart: "no"
     environment:
       AGENT_ROLE: triager
       AXL_API_PORT: "9101"
@@ -28,37 +25,43 @@ services:
     volumes:
       - ./keys/triager.pem:/app/private.pem:ro
       - ./axl/triager-config.json:/app/axl-config.json:ro
+      - peers:/peers
     ports:
-      - "9101:9101"
       - "9111:9111"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9101/topology"]
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:9101/topology > /dev/null && test -f /peers/triager"]
       interval: 3s
-      timeout: 2s
-      retries: 15
+      timeout: 3s
+      retries: 20
 
   reproducer:
-    <<: *axl-base
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.agent
     container_name: mswarm-reproducer
+    env_file: ../.env
+    restart: "no"
     environment:
       AGENT_ROLE: reproducer
       AXL_API_PORT: "9102"
       AXL_LISTEN_PORT: "9112"
-      TRIAGER_AXL_URL: "http://triager:9101"
     volumes:
       - ./keys/reproducer.pem:/app/private.pem:ro
       - ./axl/reproducer-config.json:/app/axl-config.json:ro
+      - peers:/peers
     ports:
-      - "9102:9102"
+      - "9112:9112"
     depends_on:
       triager:
         condition: service_healthy
-    security_opt:
-      - no-new-privileges:true
 
   patcher:
-    <<: *axl-base
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.agent
     container_name: mswarm-patcher
+    env_file: ../.env
+    restart: "no"
     environment:
       AGENT_ROLE: patcher
       AXL_API_PORT: "9103"
@@ -66,15 +69,20 @@ services:
     volumes:
       - ./keys/patcher.pem:/app/private.pem:ro
       - ./axl/patcher-config.json:/app/axl-config.json:ro
+      - peers:/peers
     ports:
-      - "9103:9103"
+      - "9113:9113"
     depends_on:
       triager:
         condition: service_healthy
 
   reviewer:
-    <<: *axl-base
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.agent
     container_name: mswarm-reviewer
+    env_file: ../.env
+    restart: "no"
     environment:
       AGENT_ROLE: reviewer
       AXL_API_PORT: "9104"
@@ -82,8 +90,16 @@ services:
     volumes:
       - ./keys/reviewer.pem:/app/private.pem:ro
       - ./axl/reviewer-config.json:/app/axl-config.json:ro
+      - peers:/peers
     ports:
-      - "9104:9104"
+      - "9114:9114"
     depends_on:
       triager:
         condition: service_healthy
+
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  peers:

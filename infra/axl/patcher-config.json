@@ -1,5 +1,5 @@
 {
   "listen_port": 9113,
   "api_port": 9103,
-  "bootstrap_peers": ["tcp://triager:9111"]
+  "bootstrap_peers": ["tcp://triager:7000"]
 }

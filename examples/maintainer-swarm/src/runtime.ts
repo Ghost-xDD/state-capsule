@@ -226,11 +226,28 @@ export class AgentRuntime {
   }
 
   private async _forwardHandoff(capsule: Capsule, nextRole: AgentRole): Promise<void> {
-    const nextPeerId = this.config.roleToPeerId?.[nextRole];
+    // Try config first, then fall back to live /peers/ registry file
+    let nextPeerId = this.config.roleToPeerId?.[nextRole];
+
+    if (!nextPeerId) {
+      const peersDir = process.env["PEERS_DIR"] ?? "/peers";
+      try {
+        const { readFileSync } = await import("node:fs");
+        const id = readFileSync(`${peersDir}/${nextRole}`, "utf8").trim();
+        if (id) {
+          nextPeerId = id;
+          // Cache it so we don't re-read on every forward
+          if (!this.config.roleToPeerId) this.config.roleToPeerId = {} as Record<AgentRole, string>;
+          this.config.roleToPeerId[nextRole] = id;
+          console.log(`[${this.config.role}] Discovered ${nextRole} peer_id: ${id.slice(0, 16)}...`);
+        }
+      } catch { /* peer not registered yet */ }
+    }
+
     if (!nextPeerId) {
       console.warn(
-        `[${this.config.role}] No peer_id for "${nextRole}" — ` +
-        `set PEER_ID_${nextRole.toUpperCase()} env var.`
+        `[${this.config.role}] No peer_id for "${nextRole}" yet. ` +
+        `Will retry on next handoff.`
       );
       return;
     }
@@ -242,6 +259,7 @@ export class AgentRuntime {
       holder:      this.config.role,
       next_holder: nextRole,
       log_root:    capsule.log_root,
+      payload:     { capsule },  // carry genesis data for in-memory bootstrap
       sent_at:     new Date().toISOString(),
     };
 
