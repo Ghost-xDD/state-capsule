@@ -9,11 +9,13 @@ set -e
 : "${AXL_API_PORT:=9101}"
 
 echo "[entrypoint] Starting AXL daemon for role=${AGENT_ROLE} api_port=${AXL_API_PORT}"
+
+# AXL binary is volume-mounted at /usr/local/bin/axl
 axl -config /app/axl-config.json &
 AXL_PID=$!
 
 # Wait for AXL HTTP API to be ready
-RETRIES=20
+RETRIES=30
 until wget -qO- "http://127.0.0.1:${AXL_API_PORT}/topology" > /dev/null 2>&1; do
   RETRIES=$((RETRIES - 1))
   if [ "$RETRIES" -le 0 ]; then
@@ -22,10 +24,10 @@ until wget -qO- "http://127.0.0.1:${AXL_API_PORT}/topology" > /dev/null 2>&1; do
   fi
   sleep 1
 done
-echo "[entrypoint] AXL daemon ready"
+echo "[entrypoint] AXL daemon ready ✅"
 
 echo "[entrypoint] Starting agent runtime role=${AGENT_ROLE}"
-exec node /app/examples/maintainer-swarm/dist/index.js
+exec node /app/examples/maintainer-swarm/dist/main.js
 
 # AXL daemon will be killed when the container stops
 wait $AXL_PID

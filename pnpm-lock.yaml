@@ -23,6 +23,9 @@ importers:
       '@state-capsule/sdk':
         specifier: workspace:*
         version: link:../../packages/state-capsule-sdk
+      dotenv:
+        specifier: ^16.0.0
+        version: 16.6.1
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

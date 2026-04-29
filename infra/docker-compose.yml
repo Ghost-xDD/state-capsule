@@ -3,7 +3,7 @@
 ## Prerequisites:
 ##   bash infra/gen-keys.sh
 ##   pnpm build (from repo root)
-##   AXL binary at /Users/ghostxd/Desktop/axl/node (or set AXL_BINARY_PATH)
+##   AXL binary already built at path set by AXL_BINARY_PATH in .env
 ##
 ## Usage:
 ##   docker compose -f infra/docker-compose.yml up

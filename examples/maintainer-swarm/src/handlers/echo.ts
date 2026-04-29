@@ -10,7 +10,7 @@
  * Phase 4 replaces this with specialist handlers.
  */
 
-import type { Handler, AgentRole } from "../runtime.js";
+import type { Handler, HandlerResult, AgentRole } from "../runtime.js";
 
 const PIPELINE: AgentRole[] = ["triager", "reproducer", "patcher", "reviewer"];
 
@@ -22,7 +22,7 @@ export const echoHandler: Handler = async ({ capsule, role }) => {
     ? PIPELINE[currentIdx + 1]
     : undefined;
 
-  return {
+  const result: HandlerResult = {
     update: {
       holder:      role,
       facts:       [
@@ -35,6 +35,8 @@ export const echoHandler: Handler = async ({ capsule, role }) => {
       ],
       next_action: `forwarded by ${role}`,
     },
-    next_holder: nextRole,
+    ...(nextRole ? { next_holder: nextRole } : {}),
   };
+
+  return result;
 };

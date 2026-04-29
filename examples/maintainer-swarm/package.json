@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@state-capsule/sdk": "workspace:*"
+    "@state-capsule/sdk": "workspace:*",
+    "dotenv": "^16.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

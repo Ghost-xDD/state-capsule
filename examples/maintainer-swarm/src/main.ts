@@ -31,8 +31,8 @@ async function main() {
   const runtime = new AgentRuntime({
     role,
     axlUrl,
-    privateKey: process.env["CAPSULE_PRIVATE_KEY"],
     pollIntervalMs: 500,
+    ...(process.env["CAPSULE_PRIVATE_KEY"] ? { privateKey: process.env["CAPSULE_PRIVATE_KEY"] } : {}),
   });
 
   // Resolve peer IDs for all roles from env vars (set in docker-compose)
@@ -41,7 +41,6 @@ async function main() {
   const roleToPeerId = await resolveRolePeerIds(axl, VALID_ROLES);
   runtime["config"].roleToPeerId = roleToPeerId;
 
-  // Register handler (echo for Phase 3; specialist for Phase 4)
   runtime.register(echoHandler);
 
   // Graceful shutdown

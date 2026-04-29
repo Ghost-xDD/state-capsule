@@ -1,16 +1,14 @@
-# Multi-stage: build AXL from source, then run the Node agent
-FROM golang:1.25-alpine AS axl-builder
-WORKDIR /axl
-# Expects the gensyn-ai/axl repo to be cloned at ../axl relative to the project root
-# Build with: docker compose build
-COPY ../axl /axl
-RUN go build -o /usr/local/bin/axl .
+# Single-stage: Node agent.
+# AXL Linux binary must be pre-built by running:
+#   bash infra/build-axl-linux.sh
+# before this Dockerfile is used.
 
 FROM node:22-alpine AS agent
 WORKDIR /app
 
-# AXL binary from build stage
-COPY --from=axl-builder /usr/local/bin/axl /usr/local/bin/axl
+# Copy pre-compiled AXL Linux binary (built by infra/build-axl-linux.sh)
+COPY infra/bin/axl /usr/local/bin/axl
+RUN chmod +x /usr/local/bin/axl
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -23,8 +21,9 @@ COPY examples/maintainer-swarm/ ./examples/maintainer-swarm/
 # Install deps
 RUN pnpm install --frozen-lockfile
 
-# Build packages
-RUN pnpm -r build
+# Build SDK and swarm
+RUN pnpm --filter @state-capsule/sdk build
+RUN pnpm --filter @state-capsule/maintainer-swarm build
 
 # Entrypoint: start AXL daemon then the agent runtime
 COPY infra/entrypoint.sh /entrypoint.sh

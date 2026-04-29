@@ -76,8 +76,8 @@ export class AgentRuntime {
       : undefined;
 
     this.sdk = new StateCapsule({
-      privateKey:    config.privateKey,
-      storage:       storageConfig,
+      ...(config.privateKey ? { privateKey: config.privateKey } : {}),
+      ...(storageConfig ? { storage: storageConfig } : {}),
     });
   }
 
@@ -158,7 +158,6 @@ export class AgentRuntime {
     const updated = await this.sdk.updateCapsule({
       task_id:           capsule.task_id,
       parent_capsule_id: capsule.capsule_id,
-      holder:            this.config.role,
       ...result.update,
     });
 
