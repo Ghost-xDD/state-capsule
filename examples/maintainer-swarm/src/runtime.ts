@@ -67,7 +67,7 @@ export class AgentRuntime {
     this.config = config;
     this.axl    = new AxlClient({
       baseUrl:   config.axlUrl ?? axlUrlFromEnv(),
-      timeoutMs: 15_000,
+      timeoutMs: 30_000,  // Yggdrasil routing can take time on first send
     });
 
     const storageConfig = config.storage
@@ -263,10 +263,22 @@ export class AgentRuntime {
       sent_at:     new Date().toISOString(),
     };
 
-    await this.axl.sendEnvelope(nextPeerId, envelope);
-    console.log(
-      `[${this.config.role}] ➡️  forwarded to ${nextRole} (${nextPeerId.slice(0, 12)}...)`
-    );
+    // Retry up to 3 times — first send may fail while Yggdrasil route resolves
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await this.axl.sendEnvelope(nextPeerId, envelope);
+        console.log(
+          `[${this.config.role}] ➡️  forwarded to ${nextRole} (${nextPeerId.slice(0, 12)}...)`
+        );
+        return;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[${this.config.role}] /send attempt ${attempt}/3 failed: ${err}`);
+        if (attempt < 3) await sleep(2000 * attempt);
+      }
+    }
+    console.error(`[${this.config.role}] Failed to forward to ${nextRole} after 3 attempts:`, lastErr);
   }
 }
 

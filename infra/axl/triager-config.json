@@ -1,5 +1,5 @@
 {
-  "listen_port": 9111,
+  "tcp_port": 7001,
   "api_port": 9101,
-  "bootstrap_peers": []
+  "peers": []
 }

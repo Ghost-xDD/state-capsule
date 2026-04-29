@@ -21,13 +21,10 @@ services:
     environment:
       AGENT_ROLE: triager
       AXL_API_PORT: "9101"
-      AXL_LISTEN_PORT: "9111"
     volumes:
       - ./keys/triager.pem:/app/private.pem:ro
       - ./axl/triager-config.json:/app/axl-config.json:ro
       - peers:/peers
-    ports:
-      - "9111:9111"
     healthcheck:
       test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:9101/topology > /dev/null && test -f /peers/triager"]
       interval: 3s
@@ -44,13 +41,10 @@ services:
     environment:
       AGENT_ROLE: reproducer
       AXL_API_PORT: "9102"
-      AXL_LISTEN_PORT: "9112"
     volumes:
       - ./keys/reproducer.pem:/app/private.pem:ro
       - ./axl/reproducer-config.json:/app/axl-config.json:ro
       - peers:/peers
-    ports:
-      - "9112:9112"
     depends_on:
       triager:
         condition: service_healthy
@@ -65,13 +59,10 @@ services:
     environment:
       AGENT_ROLE: patcher
       AXL_API_PORT: "9103"
-      AXL_LISTEN_PORT: "9113"
     volumes:
       - ./keys/patcher.pem:/app/private.pem:ro
       - ./axl/patcher-config.json:/app/axl-config.json:ro
       - peers:/peers
-    ports:
-      - "9113:9113"
     depends_on:
       triager:
         condition: service_healthy
@@ -86,13 +77,10 @@ services:
     environment:
       AGENT_ROLE: reviewer
       AXL_API_PORT: "9104"
-      AXL_LISTEN_PORT: "9114"
     volumes:
       - ./keys/reviewer.pem:/app/private.pem:ro
       - ./axl/reviewer-config.json:/app/axl-config.json:ro
       - peers:/peers
-    ports:
-      - "9114:9114"
     depends_on:
       triager:
         condition: service_healthy

@@ -2,12 +2,6 @@
 # Entrypoint for each agent container.
 # Starts the AXL daemon, publishes this node's peer_id to the shared
 # /peers volume, then starts the agent runtime.
-#
-# Shared volume /peers/ is a peer registry:
-#   /peers/triager   — triager's AXL public key (peer_id)
-#   /peers/reproducer
-#   /peers/patcher
-#   /peers/reviewer
 
 set -e
 
@@ -15,9 +9,12 @@ set -e
 : "${AXL_API_PORT:=9101}"
 PEERS_DIR=/peers
 
-echo "[entrypoint] Starting AXL daemon role=${AGENT_ROLE} api_port=${AXL_API_PORT}"
+# Read tcp_port from config (default 7001 if not set)
+TCP_PORT=$(grep -o '"tcp_port":[^,}]*' /app/axl-config.json | grep -o '[0-9]*' || echo 7001)
 
-axl -config /app/axl-config.json &
+echo "[entrypoint] Starting AXL daemon role=${AGENT_ROLE} api_port=${AXL_API_PORT} tcp_port=${TCP_PORT}"
+
+axl -config /app/axl-config.json -listen "tcp://0.0.0.0:${TCP_PORT}" &
 AXL_PID=$!
 
 # ── Wait for AXL API ──────────────────────────────────────────────────────────
@@ -40,10 +37,9 @@ OUR_PEER_ID=$(wget -qO- "http://127.0.0.1:${AXL_API_PORT}/topology" | grep -o '"
 echo "$OUR_PEER_ID" > "${PEERS_DIR}/${AGENT_ROLE}"
 echo "[entrypoint] Registered peer_id ${OUR_PEER_ID:0:16}... as ${AGENT_ROLE}"
 
-# Export so main.ts can read own peer ID if needed
 export OWN_PEER_ID="$OUR_PEER_ID"
 
-# ── Wait for all other peers to register (only if not triager) ────────────────
+# ── Wait for triager peer_id (all non-triager nodes) ─────────────────────────
 
 if [ "$AGENT_ROLE" != "triager" ]; then
   echo "[entrypoint] Waiting for triager peer_id..."
