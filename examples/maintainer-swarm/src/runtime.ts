@@ -15,6 +15,7 @@ import {
   type UpdateCapsuleInput,
   type ZeroGConfig,
   ZeroGConfigSchema,
+  fetchSealedSummary,
 } from "@state-capsule/sdk";
 import {
   AxlClient,
@@ -23,15 +24,31 @@ import {
   type CapsuleEnvelope,
   type CapsuleAnnounce,
 } from "@state-capsule/sdk";
+import { writeFileSync, readFileSync } from "node:fs";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type AgentRole = "triager" | "reproducer" | "patcher" | "reviewer";
 
+/**
+ * Write intermediate capsule state without forwarding to the next role.
+ * Returns the new capsule (parent advances, so the next call builds on it).
+ * Used by handlers that need multi-step checkpointing (e.g. Reproducer).
+ */
+export type CheckpointFn = (
+  update: Omit<UpdateCapsuleInput, "task_id" | "parent_capsule_id">,
+) => Promise<Capsule>;
+
 export interface HandlerContext {
-  capsule:  Capsule;
-  envelope: CapsuleEnvelope;
-  role:     AgentRole;
+  capsule:     Capsule;
+  envelope:    CapsuleEnvelope;
+  role:        AgentRole;
+  /**
+   * Persist intermediate progress without handing off to the next role.
+   * A fresh container can restore from this checkpoint if the current
+   * container is killed between steps.
+   */
+  checkpoint?: CheckpointFn;
 }
 
 export interface HandlerResult {
@@ -157,6 +174,65 @@ export class AgentRuntime {
     }
   }
 
+  // ── On-boot self-resume ────────────────────────────────────────────────────
+
+  /**
+   * Called on startup if a task-ref file is found on the shared /peers volume.
+   * Restores the capsule, optionally fetches a sealed summary from 0G Compute
+   * for fast context reconstruction, and re-runs the handler as if a fresh
+   * handoff envelope had arrived.
+   */
+  async resumeTask(taskId: string): Promise<void> {
+    if (!this.handler) throw new Error("No handler registered. Call register() first.");
+
+    console.log(`[${this.config.role}] 🔄 Resuming task ${taskId} from capsule storage…`);
+
+    let capsule: Capsule;
+    try {
+      capsule = await this.sdk.restoreCapsule(taskId);
+    } catch (err) {
+      console.error(`[${this.config.role}] resumeTask: restoreCapsule failed:`, err);
+      return;
+    }
+
+    // Guard: if the task already moved past this role, skip.
+    const alreadyForwarded =
+      capsule.next_action === "patch"            ||
+      capsule.next_action === "review"           ||
+      capsule.next_action === "pipeline-complete" ||
+      capsule.next_action === "needs-rework";
+
+    if (alreadyForwarded) {
+      console.log(
+        `[${this.config.role}] Task ${taskId} already past this stage ` +
+        `(next_action="${capsule.next_action}"). Skipping self-resume.`,
+      );
+      return;
+    }
+
+    // Fetch sealed summary from 0G Compute for fast context reconstruction.
+    const t0 = Date.now();
+    const summary = await fetchSealedSummary(capsule);
+    console.log(
+      `[${this.config.role}] 🔐 Sealed summary (attested=${summary.attested}, ` +
+      `speedup=${summary.speedup_ms}ms): ${summary.summary.slice(0, 100)}…`,
+    );
+    console.log(`[${this.config.role}] Context loaded in ${Date.now() - t0}ms`);
+
+    // Synthesize a handoff envelope so _handleCapsule can process it normally.
+    const envelope: CapsuleEnvelope = {
+      type:        "capsule.handoff",
+      task_id:     capsule.task_id,
+      capsule_id:  capsule.capsule_id,
+      holder:      capsule.holder,
+      next_holder: this.config.role,
+      log_root:    capsule.log_root,
+      sent_at:     new Date().toISOString(),
+    };
+
+    await this._handleCapsule(envelope, capsule);
+  }
+
   // ── Handoff handler ────────────────────────────────────────────────────────
 
   private async _handleHandoff(data: Uint8Array): Promise<void> {
@@ -182,7 +258,7 @@ export class AgentRuntime {
       } catch { /* already stored or non-fatal */ }
     }
 
-    // Restore capsule from storage
+    // Restore capsule from storage (always fetch the HEAD, not the envelope's ID)
     let capsule: Capsule;
     try {
       capsule = await this.sdk.restoreCapsule(envelope.task_id);
@@ -191,13 +267,44 @@ export class AgentRuntime {
       return;
     }
 
-    const ctx: HandlerContext = { capsule, envelope, role: this.config.role };
+    await this._handleCapsule(envelope, capsule);
+  }
+
+  private async _handleCapsule(envelope: CapsuleEnvelope, capsule: Capsule): Promise<void> {
+    // Persist the active task_id so a fresh container can self-resume on boot.
+    this._writeTaskRef(capsule.task_id);
+
+    // Build the checkpoint closure. Each call advances the capsule reference
+    // so the next checkpoint (or the final runtime write) uses the correct parent.
+    let currentCapsule = capsule;
+    const checkpoint: CheckpointFn = async (update) => {
+      const persisted = await this.sdk.updateCapsule({
+        task_id:           currentCapsule.task_id,
+        parent_capsule_id: currentCapsule.capsule_id,
+        ...update,
+      });
+      currentCapsule = persisted;
+      console.log(
+        `[${this.config.role}] 🔖 checkpoint → ${persisted.capsule_id.slice(0, 10)}...`,
+      );
+      // Broadcast checkpoint so observers see intermediate state.
+      await this._broadcastUpdate(persisted);
+      return persisted;
+    };
+
+    const ctx: HandlerContext = {
+      capsule:    capsule,
+      envelope,
+      role:       this.config.role,
+      checkpoint,
+    };
+
     const result = await this.handler!(ctx);
 
-    // Write capsule update
+    // Final capsule write — uses currentCapsule (post-checkpoints) as parent.
     const updated = await this.sdk.updateCapsule({
-      task_id:           capsule.task_id,
-      parent_capsule_id: capsule.capsule_id,
+      task_id:           currentCapsule.task_id,
+      parent_capsule_id: currentCapsule.capsule_id,
       ...result.update,
     });
 
