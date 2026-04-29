@@ -3,12 +3,13 @@
  *
  * Each container runs one instance of this runtime configured by AGENT_ROLE.
  * The runtime:
- *   1. Connects to the local AXL daemon
- *   2. Polls the inbox for CapsuleEnvelope messages
- *   3. Dispatches to the registered handler for the agent's role
- *   4. Persists the capsule update via the SDK
- *   5. Broadcasts a capsule.updated GossipSub announce
- *   6. Forwards the handoff to the next role's AXL peer
+ *   1. Connects to the local AXL daemon, resolves own peer_id
+ *   2. Subscribes GossipSub to "capsule.updated" topic
+ *   3. Polls /recv for CapsuleEnvelope handoff messages (type="capsule.handoff")
+ *   4. Dispatches to the registered handler for the agent's role
+ *   5. Persists the capsule update via the SDK
+ *   6. Broadcasts capsule.updated via GossipSub
+ *   7. Forwards the handoff to the next role via /a2a/
  */
 
 import {
@@ -20,6 +21,7 @@ import {
 } from "@state-capsule/sdk";
 import {
   AxlClient,
+  GossipSub,
   axlUrlFromEnv,
   type CapsuleEnvelope,
   type CapsuleAnnounce,
@@ -37,32 +39,33 @@ export interface HandlerContext {
 }
 
 export interface HandlerResult {
-  update:      Omit<UpdateCapsuleInput, "task_id" | "parent_capsule_id">;
-  next_holder?: AgentRole;   // undefined = terminal (reviewer done)
+  update:       Omit<UpdateCapsuleInput, "task_id" | "parent_capsule_id">;
+  next_holder?: AgentRole;
 }
 
 export type Handler = (ctx: HandlerContext) => Promise<HandlerResult>;
 
 export interface RuntimeConfig {
-  role:          AgentRole;
-  axlUrl?:       string;
-  storage?:      ZeroGConfig;
-  privateKey?:   string;
+  role:            AgentRole;
+  axlUrl?:         string;
+  storage?:        ZeroGConfig;
+  privateKey?:     string;
   pollIntervalMs?: number;
-  /** Peer ID → AXL base URL map (populated at startup from /topology) */
-  peers?:        Record<string, string>;
-  /** Role → peer_id map (resolved via /topology on startup) */
-  roleToPeerId?: Record<AgentRole, string>;
+  roleToPeerId?:   Record<AgentRole, string>;
 }
+
+const CAPSULE_TOPIC = "capsule.updated";
 
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
 export class AgentRuntime {
-  private axl:     AxlClient;
-  private sdk:     StateCapsule;
-  private config:  RuntimeConfig;
-  private handler: Handler | null = null;
-  private running  = false;
+  private axl:      AxlClient;
+  private gossip:   GossipSub | null = null;
+  private sdk:      StateCapsule;
+  private config:   RuntimeConfig;
+  private handler:  Handler | null = null;
+  private running   = false;
+  private ownPeerId = "";
 
   constructor(config: RuntimeConfig) {
     this.config = config;
@@ -90,20 +93,42 @@ export class AgentRuntime {
     if (!this.handler) throw new Error("No handler registered. Call register() first.");
     this.running = true;
 
-    // Subscribe to GossipSub capsule.updated topic
+    // Resolve own peer_id
     try {
-      await this.axl.gossipSubscribe();
-    } catch {
-      console.warn(`[${this.config.role}] GossipSub subscribe failed — continuing without`);
+      this.ownPeerId = await this.axl.ownPeerId();
+      console.log(`[${this.config.role}] peer_id: ${this.ownPeerId.slice(0, 16)}...`);
+    } catch (err) {
+      console.warn(`[${this.config.role}] Could not resolve peer_id: ${err}`);
     }
+
+    // Set up GossipSub
+    this.gossip = new GossipSub(this.ownPeerId, this.axl);
+    this.gossip.subscribe(CAPSULE_TOPIC, (data, from) => {
+      try {
+        const announce = JSON.parse(new TextDecoder().decode(data)) as CapsuleAnnounce;
+        console.log(
+          `[${this.config.role}] 📢 gossip capsule.updated task=${announce.task_id} ` +
+          `holder=${announce.holder} from=${from.slice(0, 12)}...`
+        );
+      } catch { /* ignore malformed gossip */ }
+    });
+
+    // Discover and add peers to gossip mesh
+    try {
+      const peers = await this.axl.connectedPeers();
+      for (const p of peers) this.gossip.addPeer(p);
+      console.log(`[${this.config.role}] ${peers.length} peers in gossip mesh`);
+    } catch { /* non-fatal */ }
 
     console.log(`[${this.config.role}] Runtime started. Polling AXL inbox...`);
 
-    const interval = this.config.pollIntervalMs ?? 1_000;
+    const interval = this.config.pollIntervalMs ?? 500;
 
     while (this.running) {
       try {
         await this._pollOnce();
+        // Run GossipSub tick on same cadence
+        await this.gossip.tick();
       } catch (err) {
         console.error(`[${this.config.role}] Poll error:`, err);
       }
@@ -111,9 +136,9 @@ export class AgentRuntime {
     }
   }
 
-  stop(): void {
-    this.running = false;
-  }
+  stop(): void { this.running = false; }
+
+  // ── Poll ──────────────────────────────────────────────────────────────────
 
   private async _pollOnce(): Promise<void> {
     const messages = await this.axl.recv(5);
@@ -122,22 +147,28 @@ export class AgentRuntime {
     }
   }
 
-  parseEnvelope(msg: AxlMessage): CapsuleEnvelope | null {
-    return this.axl.parseEnvelope(msg);
-  }
-    if (!envelope) {
-      console.warn(`[${this.config.role}] Unparseable message from ${msg.from}`);
+  private async _handleMessage(msg: AxlMessage): Promise<void> {
+    // Skip gossipsub frames — handled by GossipSub.tick()
+    const text = new TextDecoder().decode(msg.data);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      console.warn(`[${this.config.role}] Non-JSON message from ${msg.from.slice(0, 12)}...`);
       return;
     }
 
+    if (parsed["type"] === "gossipsub") return; // handled by gossip.tick()
+
+    const envelope = parsed as unknown as CapsuleEnvelope;
     if (envelope.type !== "capsule.handoff") return;
 
     console.log(
-      `[${this.config.role}] Received handoff for task ${envelope.task_id} ` +
-      `(capsule ${envelope.capsule_id.slice(0, 10)}...)`
+      `[${this.config.role}] ✉️  handoff for task=${envelope.task_id} ` +
+      `capsule=${envelope.capsule_id.slice(0, 10)}...`
     );
 
-    // Restore the capsule from storage
+    // Restore capsule from storage
     let capsule: Capsule;
     try {
       capsule = await this.sdk.restoreCapsule(envelope.task_id);
@@ -146,16 +177,10 @@ export class AgentRuntime {
       return;
     }
 
-    const ctx: HandlerContext = {
-      capsule,
-      envelope,
-      role: this.config.role,
-    };
-
-    // Run the handler
+    const ctx: HandlerContext = { capsule, envelope, role: this.config.role };
     const result = await this.handler!(ctx);
 
-    // Write the capsule update
+    // Write capsule update
     const updated = await this.sdk.updateCapsule({
       task_id:           capsule.task_id,
       parent_capsule_id: capsule.capsule_id,
@@ -163,24 +188,27 @@ export class AgentRuntime {
     });
 
     console.log(
-      `[${this.config.role}] Capsule updated → ${updated.capsule_id.slice(0, 10)}...`
+      `[${this.config.role}] ✅ capsule updated → ${updated.capsule_id.slice(0, 10)}...`
     );
 
-    // Broadcast capsule.updated via GossipSub
-    const announce: CapsuleAnnounce = {
-      task_id:    updated.task_id,
-      capsule_id: updated.capsule_id,
-      holder:     this.config.role,
-      log_root:   updated.log_root,
-      timestamp:  new Date().toISOString(),
-    };
-    await this.axl.broadcastCapsuleUpdated(announce);
+    // Broadcast via GossipSub
+    if (this.gossip) {
+      const announce: CapsuleAnnounce = {
+        task_id:    updated.task_id,
+        capsule_id: updated.capsule_id,
+        holder:     this.config.role,
+        log_root:   updated.log_root,
+        timestamp:  new Date().toISOString(),
+      };
+      const data = new TextEncoder().encode(JSON.stringify(announce));
+      await this.gossip.publish(CAPSULE_TOPIC, data);
+    }
 
     // Forward handoff to next role
     if (result.next_holder) {
       await this._forwardHandoff(updated, result.next_holder);
     } else {
-      console.log(`[${this.config.role}] Task ${updated.task_id} — pipeline complete ✅`);
+      console.log(`[${this.config.role}] 🏁 task ${updated.task_id} — pipeline complete`);
     }
   }
 
@@ -188,8 +216,8 @@ export class AgentRuntime {
     const nextPeerId = this.config.roleToPeerId?.[nextRole];
     if (!nextPeerId) {
       console.warn(
-        `[${this.config.role}] No peer_id for role "${nextRole}" — ` +
-        `set roleToPeerId in config or resolve from /topology`
+        `[${this.config.role}] No peer_id for role "${nextRole}". ` +
+        `Set PEER_ID_${nextRole.toUpperCase()} env var.`
       );
       return;
     }
@@ -205,7 +233,9 @@ export class AgentRuntime {
     };
 
     await this.axl.a2a(nextPeerId, envelope);
-    console.log(`[${this.config.role}] Forwarded handoff to ${nextRole} (${nextPeerId.slice(0, 16)}...)`);
+    console.log(
+      `[${this.config.role}] ➡️  forwarded to ${nextRole} (${nextPeerId.slice(0, 12)}...)`
+    );
   }
 }
 
@@ -215,37 +245,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Resolve roleToPeerId from /topology.
- * Each AXL node announces its role as part of its peer metadata.
- * Fallback: read ROLE_<UPPERCASE>_PEER_ID env vars.
- */
 export async function resolveRolePeerIds(
   axl: AxlClient,
   roles: AgentRole[]
 ): Promise<Record<AgentRole, string>> {
   const result = {} as Record<AgentRole, string>;
 
-  // Try env vars first (set via docker-compose environment)
   for (const role of roles) {
-    const envKey = `PEER_ID_${role.toUpperCase()}`;
-    const val    = process.env[envKey];
+    const val = process.env[`PEER_ID_${role.toUpperCase()}`];
     if (val) result[role] = val;
-  }
-
-  // Fill in any missing from topology
-  const missing = roles.filter((r) => !result[r]);
-  if (missing.length > 0) {
-    try {
-      const topo = await axl.topology();
-      for (const peer of topo.peers) {
-        // Peers announce their role in a conventional format:
-        // peer metadata (not part of AXL spec yet, so we rely on env vars)
-        console.warn(`[runtime] Peer ${peer.peer_id} — role resolution via topology not yet implemented. Set PEER_ID_<ROLE> env vars.`);
-      }
-    } catch (err) {
-      console.warn(`[runtime] topology fetch failed: ${err}`);
-    }
   }
 
   return result;
