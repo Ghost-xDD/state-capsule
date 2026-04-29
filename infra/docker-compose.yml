@@ -1,9 +1,9 @@
 ## MaintainerSwarm — 4-node AXL docker-compose
 ##
 ## Prerequisites:
-##   - AXL binary built at ../axl/node (cd ../axl && make build)
-##   - Keys generated per node: see infra/README.md
-##   - .env at repo root populated
+##   bash infra/gen-keys.sh
+##   pnpm build (from repo root)
+##   AXL binary at /Users/ghostxd/Desktop/axl/node (or set AXL_BINARY_PATH)
 ##
 ## Usage:
 ##   docker compose -f infra/docker-compose.yml up
@@ -12,8 +12,8 @@
 
 x-axl-base: &axl-base
   build:
-    context: .
-    dockerfile: Dockerfile.agent
+    context: ..
+    dockerfile: infra/Dockerfile.agent
   env_file: ../.env
   restart: "no"
 
@@ -43,6 +43,8 @@ services:
     environment:
       AGENT_ROLE: reproducer
       AXL_API_PORT: "9102"
+      AXL_LISTEN_PORT: "9112"
+      TRIAGER_AXL_URL: "http://triager:9101"
     volumes:
       - ./keys/reproducer.pem:/app/private.pem:ro
       - ./axl/reproducer-config.json:/app/axl-config.json:ro
@@ -51,7 +53,6 @@ services:
     depends_on:
       triager:
         condition: service_healthy
-    # Reproducer runs untrusted code — add seccomp/apparmor here in production
     security_opt:
       - no-new-privileges:true
 
@@ -61,6 +62,7 @@ services:
     environment:
       AGENT_ROLE: patcher
       AXL_API_PORT: "9103"
+      AXL_LISTEN_PORT: "9113"
     volumes:
       - ./keys/patcher.pem:/app/private.pem:ro
       - ./axl/patcher-config.json:/app/axl-config.json:ro
@@ -76,6 +78,7 @@ services:
     environment:
       AGENT_ROLE: reviewer
       AXL_API_PORT: "9104"
+      AXL_LISTEN_PORT: "9114"
     volumes:
       - ./keys/reviewer.pem:/app/private.pem:ro
       - ./axl/reviewer-config.json:/app/axl-config.json:ro

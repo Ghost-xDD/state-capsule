@@ -225,7 +225,10 @@ export class AxlClient {
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export function createAxlClient(baseUrl: string, timeoutMs?: number): AxlClient {
-  return new AxlClient({ baseUrl, timeoutMs });
+  return new AxlClient({
+    baseUrl,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  });
 }
 
 /**
