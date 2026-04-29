@@ -17,6 +17,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages/ ./packages/
 COPY examples/maintainer-swarm/ ./examples/maintainer-swarm/
+COPY examples/buggy-utils/ ./examples/buggy-utils/
 
 # Install deps
 RUN pnpm install --frozen-lockfile
@@ -24,6 +25,8 @@ RUN pnpm install --frozen-lockfile
 # Build SDK and swarm
 RUN pnpm --filter @state-capsule/sdk build
 RUN pnpm --filter @state-capsule/maintainer-swarm build
+# Keep buggy-utils source in place (agents read the .ts file directly).
+# No dist build needed; the source is the artefact.
 
 # Entrypoint: start AXL daemon then the agent runtime
 COPY infra/entrypoint.sh /entrypoint.sh

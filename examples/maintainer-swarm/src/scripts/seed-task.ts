@@ -43,16 +43,23 @@ async function main() {
   const sdk     = new StateCapsule({ storageAdapter: storage });
 
   const capsule = await sdk.createCapsule({
-    task_id:         taskId,
-    goal:            "Fix async race condition in queue.js — failing test: queue.test.js:42",
+    task_id: taskId,
+    goal:
+      "Review examples/buggy-utils/src/index.ts and fix all bugs. " +
+      "The library exports memoizeAsync, chunk, and partition — each contains exactly one defect.",
     holder:          "seed",
     facts:           [
-      "Issue: queue.test.js:42 fails ~50% of the time",
-      "Suspected cause: race between enqueue and dequeue",
+      "Source file: /app/examples/buggy-utils/src/index.ts",
+      "Three functions are exported: memoizeAsync, chunk, partition",
+      "Each function contains one seeded bug; find and fix all three",
     ],
-    constraints:     ["do not break the public API", "must pass all existing tests"],
-    pending_actions: ["reproduce", "patch", "review"],
-    next_action:     "reproduce",
+    constraints: [
+      "Do not change the public API signatures",
+      "All fixes must be minimal — change only what is necessary",
+      "Must not introduce new defects",
+    ],
+    pending_actions: ["triage", "reproduce", "patch", "review"],
+    next_action:     "triage",
   });
 
   console.log(`[seed] Genesis capsule: ${capsule.capsule_id.slice(0, 16)}...`);

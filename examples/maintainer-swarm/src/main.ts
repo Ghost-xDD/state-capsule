@@ -7,9 +7,19 @@
  */
 
 import { readFileSync } from "node:fs";
-import { AgentRuntime, type AgentRole } from "./runtime.js";
-import { echoHandler } from "./handlers/echo.js";
+import { AgentRuntime, type AgentRole, type Handler } from "./runtime.js";
+import { triagerHandler }   from "./handlers/triager.js";
+import { reproducerHandler } from "./handlers/reproducer.js";
+import { patcherHandler }   from "./handlers/patcher.js";
+import { reviewerHandler }  from "./handlers/reviewer.js";
 import { axlUrlFromEnv } from "@state-capsule/sdk";
+
+const HANDLERS: Record<AgentRole, Handler> = {
+  triager:    triagerHandler,
+  reproducer: reproducerHandler,
+  patcher:    patcherHandler,
+  reviewer:   reviewerHandler,
+};
 
 const VALID_ROLES: AgentRole[] = ["triager", "reproducer", "patcher", "reviewer"];
 const PEERS_DIR = process.env["PEERS_DIR"] ?? "/peers";
@@ -58,7 +68,12 @@ async function main() {
     ...(process.env["CAPSULE_PRIVATE_KEY"] ? { privateKey: process.env["CAPSULE_PRIVATE_KEY"] } : {}),
   });
 
-  runtime.register(echoHandler);
+  const handler = HANDLERS[role];
+  if (!handler) {
+    console.error(`[main] No handler registered for role "${role}"`);
+    process.exit(1);
+  }
+  runtime.register(handler);
 
   process.on("SIGTERM", () => { runtime.stop(); process.exit(0); });
   process.on("SIGINT",  () => { runtime.stop(); process.exit(0); });

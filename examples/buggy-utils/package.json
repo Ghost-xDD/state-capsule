@@ -1,0 +1,16 @@
+{
+  "name": "buggy-utils",
+  "version": "1.0.0",
+  "description": "A small TypeScript utility library",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

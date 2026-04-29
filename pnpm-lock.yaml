@@ -18,14 +18,7 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.17)
 
-  examples/maintainer-swarm:
-    dependencies:
-      '@state-capsule/sdk':
-        specifier: workspace:*
-        version: link:../../packages/state-capsule-sdk
-      dotenv:
-        specifier: ^16.0.0
-        version: 16.6.1
+  examples/buggy-utils:
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -33,6 +26,31 @@ importers:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
+
+  examples/maintainer-swarm:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.40.0
+        version: 0.40.1
+      '@state-capsule/sdk':
+        specifier: workspace:*
+        version: link:../../packages/state-capsule-sdk
+      dotenv:
+        specifier: ^16.0.0
+        version: 16.6.1
+      openai:
+        specifier: ^4.0.0
+        version: 4.104.0(ws@8.20.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.17)
 
   packages/state-capsule-contracts:
     devDependencies:
@@ -120,6 +138,9 @@ packages:
 
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
+
+  '@anthropic-ai/sdk@0.40.1':
+    resolution: {integrity: sha512-DJMWm8lTEM9Lk/MSFL+V+ugF7jKOn0M2Ujvb5fN8r2nY14aHbGPZ1k6sgjL+tpJ3VuOGJNG+4R83jEpOuYPv8w==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -3076,6 +3097,18 @@ snapshots:
   '@adraffy/ens-normalize@1.10.1': {}
 
   '@adraffy/ens-normalize@1.11.1': {}
+
+  '@anthropic-ai/sdk@0.40.1':
+    dependencies:
+      '@types/node': 18.19.130
+      '@types/node-fetch': 2.6.13
+      abort-controller: 3.0.0
+      agentkeepalive: 4.6.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    transitivePeerDependencies:
+      - encoding
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
