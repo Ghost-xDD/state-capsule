@@ -23,8 +23,8 @@ docker run --rm \
   --platform linux/arm64 \
   -v "${AXL_SRC}:/axl:ro" \
   -v "${OUT_DIR}:/out" \
-  golang:1.23-alpine \
-  sh -c "cd /axl && go build -o /out/axl ."
+  golang:1.25-alpine \
+  sh -c "cd /axl && go build -o /out/axl ./cmd/node/"
 
 chmod +x "$OUT_DIR/axl"
 echo "[build-axl] Done: $OUT_DIR/axl"

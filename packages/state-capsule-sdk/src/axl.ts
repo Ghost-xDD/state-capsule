@@ -1,58 +1,60 @@
 /**
  * axl.ts — Typed HTTP client for a local Gensyn AXL daemon.
  *
- * AXL exposes a local HTTP API (default: http://127.0.0.1:<AXL_API_PORT>).
- * This wrapper covers:
- *   POST /send            — point-to-point message to a peer
- *   GET  /recv            — poll inbox for incoming messages
- *   POST /a2a/            — agent-to-agent handoff (structured envelope)
- *   GET  /topology        — list peers and own peer_id
- *   POST /gossipsub/publish   — broadcast to a topic (capsule.updated)
- *   POST /gossipsub/subscribe — subscribe to a topic
- *   GET  /gossipsub/messages  — poll for received gossip messages
+ * Actual AXL HTTP API (from source inspection):
  *
- * Message envelope (for /a2a/ and /send):
- *   { type, task_id, capsule_id, holder, payload? }
+ *   GET  /topology              → TopologyInfo { our_public_key, peers, tree }
+ *   POST /send                  → raw binary body, X-Destination-Peer-Id header
+ *   GET  /recv                  → raw binary body + X-From-Peer-Id header (204 = empty)
+ *   POST /a2a/{peer_id}         → JSON-RPC A2A envelope (peer_id in URL path)
+ *   GET  /a2a/{peer_id}         → agent card discovery
+ *   POST /mcp/{peer_id}         → MCP request forwarding
  *
- * GossipSub announce (capsule.updated topic):
- *   { task_id, capsule_id, holder, log_root, timestamp }
+ * There is no built-in GossipSub HTTP endpoint. The GossipSub broadcast
+ * pattern is implemented via /send to all known peers (fan-out).
+ *
+ * Message format:
+ *   We use a JSON CapsuleEnvelope encoded as UTF-8 bytes for /send and /recv.
+ *   For /a2a/ we use the A2A JSON-RPC wrapper.
  */
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type MessageType =
   | "capsule.handoff"   // primary handoff: next agent should restore + continue
-  | "capsule.updated"   // announce: mesh broadcast (gossipsub)
+  | "capsule.updated"   // fan-out broadcast to all peers (gossip replacement)
   | "capsule.request"   // request latest capsule for a task
   | "capsule.response"; // response to a request
 
 export interface CapsuleEnvelope {
-  type:        MessageType;
-  task_id:     string;
-  capsule_id:  string;
-  holder:      string;
-  log_root?:   string | null;
-  next_holder?: string;         // who should pick this up
-  payload?:    Record<string, unknown>;
-  sent_at:     string;          // ISO timestamp
+  type:         MessageType;
+  task_id:      string;
+  capsule_id:   string;
+  holder:       string;
+  log_root?:    string | null;
+  next_holder?: string;
+  payload?:     Record<string, unknown>;
+  sent_at:      string;
 }
 
 export interface AxlTopology {
-  peer_id: string;
-  peers:   Array<{ peer_id: string; address: string }>;
+  our_public_key: string;
+  our_ipv6:       string;
+  peers:          Array<{
+    uri:        string;
+    up:         boolean;
+    public_key: string;
+  }> | null;
+  tree: Array<{
+    public_key: string;
+    parent:     string;
+    sequence:   number;
+  }>;
 }
 
 export interface AxlMessage {
-  from:    string;
-  payload: string;   // JSON-encoded CapsuleEnvelope
-  received_at?: string;
-}
-
-export interface GossipMessage {
-  topic:   string;
-  from:    string;
-  payload: string;   // JSON-encoded CapsuleAnnounce
-  seq:     number;
+  from:    string;   // X-From-Peer-Id header value
+  data:    Uint8Array;
 }
 
 export interface CapsuleAnnounce {
@@ -63,17 +65,17 @@ export interface CapsuleAnnounce {
   timestamp:  string;
 }
 
-// ── Client ────────────────────────────────────────────────────────────────────
+// ── Config ────────────────────────────────────────────────────────────────────
 
 export interface AxlClientConfig {
-  /** Base URL of the local AXL HTTP API, e.g. http://127.0.0.1:9101 */
-  baseUrl: string;
-  /** Optional request timeout in ms (default: 10 000) */
+  baseUrl:    string;
   timeoutMs?: number;
 }
 
+// ── Client ────────────────────────────────────────────────────────────────────
+
 export class AxlClient {
-  private base: string;
+  private base:      string;
   private timeoutMs: number;
 
   constructor(config: AxlClientConfig) {
@@ -84,138 +86,164 @@ export class AxlClient {
   // ── Topology ────────────────────────────────────────────────────────────────
 
   async topology(): Promise<AxlTopology> {
-    return this._get<AxlTopology>("/topology");
+    return this._getJson<AxlTopology>("/topology");
   }
 
   async ownPeerId(): Promise<string> {
     const topo = await this.topology();
-    return topo.peer_id;
+    return topo.our_public_key;
   }
 
-  // ── Point-to-point (/send + /recv) ──────────────────────────────────────────
-
-  async send(toPeerId: string, envelope: CapsuleEnvelope): Promise<void> {
-    await this._post("/send", {
-      to:      toPeerId,
-      payload: JSON.stringify(envelope),
-    });
+  /** Return all connected peer public keys */
+  async connectedPeers(): Promise<string[]> {
+    const topo = await this.topology();
+    return (topo.peers ?? [])
+      .filter((p) => p.up)
+      .map((p) => p.public_key);
   }
 
-  async recv(maxMessages = 10): Promise<AxlMessage[]> {
-    const result = await this._get<{ messages: AxlMessage[] }>(
-      `/recv?limit=${maxMessages}`
-    );
-    return result.messages ?? [];
-  }
-
-  // ── Agent-to-agent (/a2a/) ─────────────────────────────────────────────────
+  // ── /send (point-to-point raw binary) ──────────────────────────────────────
 
   /**
-   * Send a structured agent-to-agent handoff.
-   * AXL routes to the peer matching toPeerId.
+   * Send raw bytes to a peer. Uses X-Destination-Peer-Id header.
    */
-  async a2a(toPeerId: string, envelope: CapsuleEnvelope): Promise<void> {
-    await this._post("/a2a/", {
-      to:      toPeerId,
-      message: JSON.stringify(envelope),
-    });
-  }
-
-  // ── GossipSub (capsule.updated broadcast) ───────────────────────────────────
-
-  readonly CAPSULE_TOPIC = "capsule.updated";
-
-  async gossipSubscribe(topic = this.CAPSULE_TOPIC): Promise<void> {
-    await this._post("/gossipsub/subscribe", { topic });
-  }
-
-  /**
-   * Broadcast a capsule-updated announcement to the whole mesh.
-   * Called automatically by broadcastCapsuleUpdated().
-   */
-  async gossipPublish(
-    announce: CapsuleAnnounce,
-    topic = this.CAPSULE_TOPIC
-  ): Promise<void> {
-    await this._post("/gossipsub/publish", {
-      topic,
-      payload: JSON.stringify(announce),
-    });
-  }
-
-  async gossipMessages(topic = this.CAPSULE_TOPIC): Promise<GossipMessage[]> {
-    const result = await this._get<{ messages: GossipMessage[] }>(
-      `/gossipsub/messages?topic=${encodeURIComponent(topic)}`
-    );
-    return result.messages ?? [];
-  }
-
-  /**
-   * Convenience: broadcast a capsule.updated announce after any capsule write.
-   */
-  async broadcastCapsuleUpdated(announce: CapsuleAnnounce): Promise<void> {
-    try {
-      await this.gossipPublish(announce);
-    } catch (err) {
-      // GossipSub is best-effort — don't fail the main flow if broadcast fails
-      console.warn(`[axl] gossip broadcast failed (non-fatal): ${String(err)}`);
-    }
-  }
-
-  // ── Decode helpers ──────────────────────────────────────────────────────────
-
-  parseEnvelope(raw: AxlMessage): CapsuleEnvelope | null {
-    try {
-      return JSON.parse(raw.payload) as CapsuleEnvelope;
-    } catch {
-      return null;
-    }
-  }
-
-  parseAnnounce(raw: GossipMessage): CapsuleAnnounce | null {
-    try {
-      return JSON.parse(raw.payload) as CapsuleAnnounce;
-    } catch {
-      return null;
-    }
-  }
-
-  // ── Internal HTTP helpers ───────────────────────────────────────────────────
-
-  private async _get<T>(path: string): Promise<T> {
+  async send(toPeerId: string, data: Uint8Array): Promise<void> {
     const controller = new AbortController();
     const timer      = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(`${this.base}${path}`, {
-        signal: controller.signal,
+      const res = await fetch(`${this.base}/send`, {
+        method:  "POST",
+        headers: { "X-Destination-Peer-Id": toPeerId },
+        body:    data,
+        signal:  controller.signal,
       });
-      if (!res.ok) {
-        throw new Error(`AXL ${path} → HTTP ${res.status}: ${await res.text()}`);
-      }
-      return (await res.json()) as T;
+      if (!res.ok) throw new Error(`AXL /send → HTTP ${res.status}: ${await res.text()}`);
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async _post<T = unknown>(
-    path: string,
-    body: Record<string, unknown>
-  ): Promise<T> {
+  /**
+   * Send a CapsuleEnvelope to a peer via /send.
+   */
+  async sendEnvelope(toPeerId: string, envelope: CapsuleEnvelope): Promise<void> {
+    const data = new TextEncoder().encode(JSON.stringify(envelope));
+    await this.send(toPeerId, data);
+  }
+
+  // ── /recv (poll inbox) ─────────────────────────────────────────────────────
+
+  /**
+   * Poll for one message from the inbox.
+   * Returns null if inbox is empty (204).
+   */
+  async recvOne(): Promise<AxlMessage | null> {
     const controller = new AbortController();
     const timer      = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(`${this.base}${path}`, {
+      const res = await fetch(`${this.base}/recv`, { signal: controller.signal });
+      if (res.status === 204) return null;                 // empty inbox
+      if (!res.ok) throw new Error(`AXL /recv → HTTP ${res.status}: ${await res.text()}`);
+
+      const from = res.headers.get("X-From-Peer-Id") ?? "";
+      const buf  = await res.arrayBuffer();
+      return { from, data: new Uint8Array(buf) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Drain up to `max` messages from the inbox.
+   */
+  async recv(max = 10): Promise<AxlMessage[]> {
+    const messages: AxlMessage[] = [];
+    for (let i = 0; i < max; i++) {
+      const msg = await this.recvOne();
+      if (!msg) break;
+      messages.push(msg);
+    }
+    return messages;
+  }
+
+  // ── /a2a/{peer_id} ─────────────────────────────────────────────────────────
+
+  /**
+   * Send a JSON-RPC A2A message to a peer.
+   * The peer_id is embedded in the URL path.
+   */
+  async a2a(toPeerId: string, envelope: CapsuleEnvelope): Promise<unknown> {
+    const body       = JSON.stringify(envelope);
+    const controller = new AbortController();
+    const timer      = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const res = await fetch(`${this.base}/a2a/${toPeerId}`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify(body),
+        body,
         signal:  controller.signal,
       });
-      if (!res.ok) {
-        throw new Error(`AXL POST ${path} → HTTP ${res.status}: ${await res.text()}`);
-      }
+      if (!res.ok) throw new Error(`AXL /a2a → HTTP ${res.status}: ${await res.text()}`);
       const text = await res.text();
-      return (text ? JSON.parse(text) : {}) as T;
+      return text ? JSON.parse(text) : {};
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ── GossipSub replacement: fan-out via /send ──────────────────────────────
+
+  /**
+   * Broadcast a capsule.updated announce to all connected peers via /send fan-out.
+   * Best-effort — failures are logged but do not throw.
+   */
+  async broadcastCapsuleUpdated(announce: CapsuleAnnounce): Promise<void> {
+    const envelope: CapsuleEnvelope = {
+      type:       "capsule.updated",
+      task_id:    announce.task_id,
+      capsule_id: announce.capsule_id,
+      holder:     announce.holder,
+      log_root:   announce.log_root,
+      sent_at:    announce.timestamp,
+    };
+    const data = new TextEncoder().encode(JSON.stringify(envelope));
+
+    let peers: string[];
+    try {
+      peers = await this.connectedPeers();
+    } catch {
+      return;
+    }
+
+    await Promise.allSettled(
+      peers.map((peerId) =>
+        this.send(peerId, data).catch((err) =>
+          console.warn(`[axl] broadcast to ${peerId.slice(0, 16)}... failed: ${err}`)
+        )
+      )
+    );
+  }
+
+  // ── Decode helpers ──────────────────────────────────────────────────────────
+
+  parseEnvelope(msg: AxlMessage): CapsuleEnvelope | null {
+    try {
+      const text = new TextDecoder().decode(msg.data);
+      return JSON.parse(text) as CapsuleEnvelope;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Internal JSON GET ───────────────────────────────────────────────────────
+
+  private async _getJson<T>(path: string): Promise<T> {
+    const controller = new AbortController();
+    const timer      = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const res = await fetch(`${this.base}${path}`, { signal: controller.signal });
+      if (!res.ok) throw new Error(`AXL ${path} → HTTP ${res.status}: ${await res.text()}`);
+      return (await res.json()) as T;
     } finally {
       clearTimeout(timer);
     }
@@ -231,10 +259,6 @@ export function createAxlClient(baseUrl: string, timeoutMs?: number): AxlClient 
   });
 }
 
-/**
- * Build the AXL base URL from environment variables.
- * Reads AXL_API_PORT (set per-container) with fallback.
- */
 export function axlUrlFromEnv(fallbackPort = 9101): string {
   const port = process.env["AXL_API_PORT"] ?? String(fallbackPort);
   return `http://127.0.0.1:${port}`;

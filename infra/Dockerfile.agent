@@ -14,7 +14,7 @@ RUN chmod +x /usr/local/bin/axl
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Copy workspace files
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages/ ./packages/
 COPY examples/maintainer-swarm/ ./examples/maintainer-swarm/
 

@@ -122,8 +122,9 @@ export class AgentRuntime {
     }
   }
 
-  private async _handleMessage(msg: AxlMessage): Promise<void> {
-    const envelope = this.axl.parseEnvelope(msg);
+  parseEnvelope(msg: AxlMessage): CapsuleEnvelope | null {
+    return this.axl.parseEnvelope(msg);
+  }
     if (!envelope) {
       console.warn(`[${this.config.role}] Unparseable message from ${msg.from}`);
       return;
