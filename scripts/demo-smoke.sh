@@ -26,7 +26,7 @@ fail() {
   echo "[smoke] FAIL: $*" >&2
   log "--- triager logs (last 60 lines) ---"
   docker logs --tail=60 mswarm-triager 2>&1 || true
-  $COMPOSE down --remove-orphans 2>/dev/null || true
+  $COMPOSE down --remove-orphans -v 2>/dev/null || true
   exit 1
 }
 
