@@ -4,12 +4,13 @@
  * Usage (from repo root):
  *   node examples/maintainer-swarm/dist/scripts/seed-task.js
  *
- * Or via pnpm:
- *   pnpm --filter @state-capsule/maintainer-swarm seed
- *
  * The script:
- *   1. Creates a genesis capsule for a new task
- *   2. Sends a capsule.handoff envelope to the triager via AXL
+ *   1. Creates a genesis capsule
+ *   2. Sends a capsule.handoff envelope to the triager via /send (AXL Pattern 1)
+ *
+ * Required env vars:
+ *   TRIAGER_PEER_ID   — 64-char hex public key from /topology
+ *   TRIAGER_AXL_URL   — default http://127.0.0.1:9101
  */
 
 import { config } from "dotenv";
@@ -20,7 +21,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env"), override: true });
 
 import { StateCapsule, createMemoryStorage } from "@state-capsule/sdk";
-import { AxlClient, axlUrlFromEnv, type CapsuleEnvelope } from "@state-capsule/sdk";
+import { AxlClient, type CapsuleEnvelope } from "@state-capsule/sdk";
 
 async function main() {
   const triagerUrl    = process.env["TRIAGER_AXL_URL"]    ?? "http://127.0.0.1:9101";
@@ -28,9 +29,9 @@ async function main() {
 
   if (!triagerPeerId) {
     console.error(
-      "TRIAGER_PEER_ID env var is required.\n" +
-      "Run: docker compose -f infra/docker-compose.yml up -d triager\n" +
-      "Then: curl http://127.0.0.1:9101/topology | jq .peer_id"
+      "TRIAGER_PEER_ID is required.\n" +
+      "Hint: docker exec mswarm-triager wget -qO- http://127.0.0.1:9101/topology | " +
+      "grep -o '\"our_public_key\":\"[^\"]*\"'"
     );
     process.exit(1);
   }
@@ -38,8 +39,6 @@ async function main() {
   const taskId = `bug-${Date.now()}`;
   console.log(`[seed] Creating task: ${taskId}`);
 
-  // Use in-memory storage for seed (capsule is created on triager's node)
-  // In production, use ZeroGStorage so all agents share the same state
   const storage = createMemoryStorage();
   const sdk     = new StateCapsule({ storageAdapter: storage });
 
@@ -60,16 +59,21 @@ async function main() {
 
   const axl = new AxlClient({ baseUrl: triagerUrl });
 
+  // Embed the full capsule payload so the triager can bootstrap its storage
+  // without needing shared 0G storage for the genesis record.
   const envelope: CapsuleEnvelope = {
     type:        "capsule.handoff",
     task_id:     capsule.task_id,
     capsule_id:  capsule.capsule_id,
     holder:      "seed",
     next_holder: "triager",
+    log_root:    capsule.log_root,
+    payload:     { capsule },   // full genesis capsule for bootstrap
     sent_at:     new Date().toISOString(),
   };
 
-  await axl.a2a(triagerPeerId, envelope);
+  // Send via /send (AXL Pattern 1 — no A2A server required)
+  await axl.sendEnvelope(triagerPeerId, envelope);
   console.log(`[seed] Handoff sent to triager (${triagerPeerId.slice(0, 16)}...)`);
   console.log(`[seed] Task ${taskId} is live — watch capsule.updated GossipSub topic`);
 }

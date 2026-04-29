@@ -126,6 +126,16 @@ export class StateCapsule {
     return toHex(this.publicKey);
   }
 
+  /**
+   * Seed a capsule into local storage without creating a new signed update.
+   * Used by agents when receiving a genesis capsule embedded in a handoff
+   * envelope (allows first-hop bootstrap without shared 0G storage).
+   */
+  async bootstrapCapsule(raw: unknown): Promise<void> {
+    const capsule = CapsuleSchema.parse(raw);
+    await this._persist(capsule);
+  }
+
   // ── createCapsule ──────────────────────────────────────────────────────────
 
   async createCapsule(input: CreateCapsuleInput): Promise<Capsule> {

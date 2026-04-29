@@ -1,15 +1,12 @@
 /**
  * runtime.ts — Generic agent runtime for MaintainerSwarm.
  *
- * Each container runs one instance of this runtime configured by AGENT_ROLE.
- * The runtime:
- *   1. Connects to the local AXL daemon, resolves own peer_id
- *   2. Subscribes GossipSub to "capsule.updated" topic
- *   3. Polls /recv for CapsuleEnvelope handoff messages (type="capsule.handoff")
- *   4. Dispatches to the registered handler for the agent's role
- *   5. Persists the capsule update via the SDK
- *   6. Broadcasts capsule.updated via GossipSub
- *   7. Forwards the handoff to the next role via /a2a/
+ * Each container runs one AgentRuntime configured by AGENT_ROLE.
+ *
+ * Transport: ALL inter-agent messages go over /send + /recv (AXL Pattern 1).
+ * The runtime is the sole owner of the /recv drain. It routes each message:
+ *   - gossipsub frames   → GossipSub.ingest()
+ *   - capsule.handoff    → handler → capsule write → GossipSub.publish() → /send to next role
  */
 
 import {
@@ -25,7 +22,6 @@ import {
   axlUrlFromEnv,
   type CapsuleEnvelope,
   type CapsuleAnnounce,
-  type AxlMessage,
 } from "@state-capsule/sdk";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -113,7 +109,7 @@ export class AgentRuntime {
       } catch { /* ignore malformed gossip */ }
     });
 
-    // Discover and add peers to gossip mesh
+    // Discover peers
     try {
       const peers = await this.axl.connectedPeers();
       for (const p of peers) this.gossip.addPeer(p);
@@ -127,8 +123,6 @@ export class AgentRuntime {
     while (this.running) {
       try {
         await this._pollOnce();
-        // Run GossipSub tick on same cadence
-        await this.gossip.tick();
       } catch (err) {
         console.error(`[${this.config.role}] Poll error:`, err);
       }
@@ -138,35 +132,55 @@ export class AgentRuntime {
 
   stop(): void { this.running = false; }
 
-  // ── Poll ──────────────────────────────────────────────────────────────────
+  // ── Single recv drain — owns the /recv queue ───────────────────────────────
 
   private async _pollOnce(): Promise<void> {
-    const messages = await this.axl.recv(5);
+    const messages = await this.axl.recv(10);
+
     for (const msg of messages) {
-      await this._handleMessage(msg);
+      // Route: offer to gossip first; if it's a gossipsub frame it's consumed
+      const consumed = await this.gossip?.ingest(msg.from, msg.data) ?? false;
+      if (!consumed) {
+        await this._handleHandoff(msg.data);
+      }
+    }
+
+    // Heartbeat-only tick (no recv drain)
+    await this.gossip?.runHeartbeat();
+
+    // Re-discover peers periodically so gossip mesh grows as nodes join
+    if (this.gossip && Math.random() < 0.05) {
+      try {
+        const peers = await this.axl.connectedPeers();
+        for (const p of peers) this.gossip.addPeer(p);
+      } catch { /* non-fatal */ }
     }
   }
 
-  private async _handleMessage(msg: AxlMessage): Promise<void> {
-    // Skip gossipsub frames — handled by GossipSub.tick()
-    const text = new TextDecoder().decode(msg.data);
-    let parsed: Record<string, unknown>;
+  // ── Handoff handler ────────────────────────────────────────────────────────
+
+  private async _handleHandoff(data: Uint8Array): Promise<void> {
+    let envelope: CapsuleEnvelope;
     try {
-      parsed = JSON.parse(text) as Record<string, unknown>;
+      const parsed = JSON.parse(new TextDecoder().decode(data)) as Record<string, unknown>;
+      if (parsed["type"] !== "capsule.handoff") return;
+      envelope = parsed as unknown as CapsuleEnvelope;
     } catch {
-      console.warn(`[${this.config.role}] Non-JSON message from ${msg.from.slice(0, 12)}...`);
       return;
     }
 
-    if (parsed["type"] === "gossipsub") return; // handled by gossip.tick()
-
-    const envelope = parsed as unknown as CapsuleEnvelope;
-    if (envelope.type !== "capsule.handoff") return;
-
     console.log(
-      `[${this.config.role}] ✉️  handoff for task=${envelope.task_id} ` +
+      `[${this.config.role}] ✉️  handoff task=${envelope.task_id} ` +
       `capsule=${envelope.capsule_id.slice(0, 10)}...`
     );
+
+    // If envelope carries a genesis payload, seed our local storage first
+    // so restoreCapsule works without shared 0G storage for the first hop.
+    if (envelope.payload?.["capsule"]) {
+      try {
+        await this.sdk.bootstrapCapsule(envelope.payload["capsule"]);
+      } catch { /* already stored or non-fatal */ }
+    }
 
     // Restore capsule from storage
     let capsule: Capsule;
@@ -200,15 +214,14 @@ export class AgentRuntime {
         log_root:   updated.log_root,
         timestamp:  new Date().toISOString(),
       };
-      const data = new TextEncoder().encode(JSON.stringify(announce));
-      await this.gossip.publish(CAPSULE_TOPIC, data);
+      await this.gossip.publish(CAPSULE_TOPIC, new TextEncoder().encode(JSON.stringify(announce)));
     }
 
-    // Forward handoff to next role
+    // Forward handoff to next role via /send
     if (result.next_holder) {
       await this._forwardHandoff(updated, result.next_holder);
     } else {
-      console.log(`[${this.config.role}] 🏁 task ${updated.task_id} — pipeline complete`);
+      console.log(`[${this.config.role}] 🏁 pipeline complete for task ${updated.task_id}`);
     }
   }
 
@@ -216,8 +229,8 @@ export class AgentRuntime {
     const nextPeerId = this.config.roleToPeerId?.[nextRole];
     if (!nextPeerId) {
       console.warn(
-        `[${this.config.role}] No peer_id for role "${nextRole}". ` +
-        `Set PEER_ID_${nextRole.toUpperCase()} env var.`
+        `[${this.config.role}] No peer_id for "${nextRole}" — ` +
+        `set PEER_ID_${nextRole.toUpperCase()} env var.`
       );
       return;
     }
@@ -232,7 +245,7 @@ export class AgentRuntime {
       sent_at:     new Date().toISOString(),
     };
 
-    await this.axl.a2a(nextPeerId, envelope);
+    await this.axl.sendEnvelope(nextPeerId, envelope);
     console.log(
       `[${this.config.role}] ➡️  forwarded to ${nextRole} (${nextPeerId.slice(0, 12)}...)`
     );
@@ -246,15 +259,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function resolveRolePeerIds(
-  axl: AxlClient,
+  _axl: AxlClient,
   roles: AgentRole[]
-): Promise<Record<AgentRole, string>> {
-  const result = {} as Record<AgentRole, string>;
-
+): Promise<Partial<Record<AgentRole, string>>> {
+  const result: Partial<Record<AgentRole, string>> = {};
   for (const role of roles) {
     const val = process.env[`PEER_ID_${role.toUpperCase()}`];
     if (val) result[role] = val;
   }
-
   return result;
 }
