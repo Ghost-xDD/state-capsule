@@ -78,7 +78,31 @@ async function main() {
   process.on("SIGTERM", () => { runtime.stop(); process.exit(0); });
   process.on("SIGINT",  () => { runtime.stop(); process.exit(0); });
 
+  // ── On-boot self-resume ───────────────────────────────────────────────────
+  // If this container was killed mid-task, the previous instance wrote the
+  // active task_id to /peers/<role>-task on the shared Docker volume.
+  // Check for it and self-resume before entering the normal polling loop.
+  const activeTaskId = readActiveTask(role);
+  if (activeTaskId) {
+    console.log(`[main] 🔄 Found active task: ${activeTaskId} — self-resuming…`);
+    try {
+      await runtime.resumeTask(activeTaskId);
+    } catch (err) {
+      console.error(`[main] Self-resume failed (will continue polling normally):`, err);
+    }
+  }
+
   await runtime.start();
+}
+
+function readActiveTask(role: AgentRole): string | null {
+  const peersDir = process.env["PEERS_DIR"] ?? "/peers";
+  try {
+    const taskId = readFileSync(`${peersDir}/${role}-task`, "utf8").trim();
+    return taskId || null;
+  } catch {
+    return null;
+  }
 }
 
 main().catch((err) => {

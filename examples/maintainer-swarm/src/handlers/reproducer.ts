@@ -1,20 +1,30 @@
 /**
- * reproducer.ts — Bug-reproduction handler.
+ * reproducer.ts — Bug-reproduction handler (Phase 5: kill-and-resume).
  *
- * Reads the triage output written by the triager, then calls the LLM to
- * generate minimal TypeScript test cases (using Node's built-in `assert`)
- * that expose each bug. Results are written back to the capsule so the
- * patcher has concrete failing tests to work against.
+ * The Reproducer runs in TWO checkpointed steps:
  *
- * This is the stage that gets killed mid-run in the Phase 5 kill-and-resume
- * demo. The capsule's last persisted state lets a fresh container pick up
- * exactly where it left off.
+ *   Step 1 — Planning  (LLM call 1)
+ *     Reads the triager's bug list. Asks the LLM to design a test strategy:
+ *     which function to test first, what inputs will trigger each bug, and
+ *     what the expected vs actual output will be.
+ *     Writes an intermediate checkpoint:
+ *       [reproducer:step]  = "planning-done"
+ *       [reproducer:plan]  = <JSON plan>
  *
- * Writes to capsule:
- *   facts:    one "[reproducer:tests] <JSON>" entry + test summaries
- *   decisions: reproduction verdict line
- *   next_action: "patch"
- *   next_holder: "patcher"
+ *   ← THIS IS THE KILL POINT FOR THE DEMO →
+ *
+ *   Step 2 — Writing tests  (LLM call 2)
+ *     Reads the plan (from capsule facts after the step-1 checkpoint).
+ *     Asks the LLM to produce minimal failing test cases.
+ *     Returns the final HandlerResult:
+ *       [reproducer:step]  = "tests-written"
+ *       [reproducer:tests] = <JSON tests>
+ *
+ * On-boot resume: if the container was killed between step 1 and step 2,
+ * the task-ref file on the shared /peers volume tells main.ts to call
+ * runtime.resumeTask(). The runtime restores the HEAD capsule (which has
+ * the step-1 checkpoint already), and this handler detects the partial
+ * progress and jumps straight to step 2.
  */
 
 import { readFileSync } from "node:fs";
@@ -23,10 +33,23 @@ import type { Handler, HandlerResult } from "../runtime.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface TestPlan {
+  approach:   string;           // overall test strategy
+  test_cases: TestPlanCase[];
+}
+
+interface TestPlanCase {
+  bug_id:          string;
+  function_name:   string;
+  trigger_input:   string;   // human-readable description
+  expected_output: string;
+  actual_output:   string;   // what the buggy code produces
+}
+
 interface ReproTest {
   bug_id:    string;
   test_name: string;
-  code:      string;   // self-contained Node.js script (uses assert)
+  code:      string;   // self-contained Node.js snippet using assert
 }
 
 interface ReproOutput {
@@ -42,7 +65,7 @@ function readSource(): string {
   return readFileSync(DEFAULT_SOURCE_PATH, "utf8");
 }
 
-// ── Capsule fact extraction ───────────────────────────────────────────────────
+// ── Capsule fact helpers ──────────────────────────────────────────────────────
 
 function extractTaggedFact(facts: string[], tag: string): string | null {
   const prefix = `[${tag}] `;
@@ -50,14 +73,38 @@ function extractTaggedFact(facts: string[], tag: string): string | null {
   return found ? found.slice(prefix.length) : null;
 }
 
-// ── System prompt ─────────────────────────────────────────────────────────────
+function getStep(facts: string[]): string | null {
+  return extractTaggedFact(facts, "reproducer:step");
+}
 
-const SYSTEM = `\
-You are a test engineer. Given a list of identified bugs and the original
-TypeScript source code, write minimal failing test cases that clearly reproduce
-each bug. Use ONLY Node's built-in \`assert\` module — no external test
-framework. Each test should be a self-contained snippet that can be pasted
-into a Node REPL or script and run directly.
+// ── System prompts ────────────────────────────────────────────────────────────
+
+const PLAN_SYSTEM = `\
+You are a test engineer designing a test strategy. Given a list of identified
+bugs in TypeScript code, design a precise test plan: for each bug, state which
+function is affected, what input triggers the bug, and what the expected vs
+actual output should be.
+
+Respond with ONLY a JSON object in this exact shape:
+{
+  "approach": "<one sentence overall strategy>",
+  "test_cases": [
+    {
+      "bug_id": "bug-1",
+      "function_name": "<name of the function>",
+      "trigger_input": "<human-readable description of the input>",
+      "expected_output": "<what correct code returns>",
+      "actual_output": "<what the buggy code returns>"
+    }
+  ]
+}
+
+Do not wrap the JSON in markdown fences or add any prose outside the JSON.`;
+
+const TESTS_SYSTEM = `\
+You are a test engineer. Given a test plan and the original TypeScript source
+code, write minimal failing test cases using ONLY Node's built-in \`assert\`
+module. Each test must be a self-contained snippet that can run directly.
 
 Respond with ONLY a JSON object in this exact shape:
 {
@@ -74,21 +121,113 @@ Do not wrap the JSON in markdown fences or add any prose outside the JSON.`;
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
-export const reproducerHandler: Handler = async ({ capsule }) => {
+export const reproducerHandler: Handler = async (ctx) => {
+  const { capsule, checkpoint } = ctx;
+  const taskId  = capsule.task_id;
+  const source  = readSource();
+
   const bugsJson = extractTaggedFact(capsule.facts, "triager:bugs");
   if (!bugsJson) {
     throw new Error("[reproducer] No triager:bugs fact found in capsule");
   }
 
-  const source = readSource();
+  // ── Detect existing progress ──────────────────────────────────────────────
 
-  console.log("[reproducer] Writing reproduction tests…");
+  const step = getStep(capsule.facts);
+  let plan: TestPlan | null = null;
+  let currentFacts     = capsule.facts;
+  let currentDecisions = capsule.decisions;
 
-  const raw = await callLLM({
-    tag:    `reproducer:${capsule.task_id}`,
-    system: SYSTEM,
+  if (step === null) {
+    // ── Step 1: Planning ────────────────────────────────────────────────────
+    console.log("[reproducer] Step 1 — Planning test strategy…");
+
+    const raw = await callLLM({
+      tag:    `reproducer:plan:${taskId}`,
+      system: PLAN_SYSTEM,
+      user: [
+        `Identified bugs:`,
+        bugsJson,
+        ``,
+        `Source file: ${DEFAULT_SOURCE_PATH}`,
+        `\`\`\`typescript`,
+        source,
+        `\`\`\``,
+      ].join("\n"),
+      maxTokens: 1024,
+    });
+
+    try {
+      plan = JSON.parse(extractJSON(raw)) as TestPlan;
+    } catch {
+      console.warn("[reproducer] Step 1: failed to parse plan JSON, continuing with empty plan");
+      plan = { approach: "write failing tests for each bug", test_cases: [] };
+    }
+
+    console.log(
+      `[reproducer] Plan: ${plan.approach} — ${plan.test_cases.length} test case(s) designed`,
+    );
+
+    const planFacts = [
+      ...currentFacts,
+      `[reproducer:step] planning-done`,
+      `[reproducer:plan] ${JSON.stringify(plan)}`,
+    ];
+    const planDecisions = [
+      ...currentDecisions,
+      `[reproducer] Designed test plan: ${plan.approach}`,
+    ];
+
+    // Checkpoint step 1 — a kill HERE is the demo's lobotomy point.
+    if (checkpoint) {
+      const persisted = await checkpoint({
+        holder:      "reproducer",
+        facts:       planFacts,
+        decisions:   planDecisions,
+        next_action: "write-reproduction-tests",
+      });
+      // Advance our local state to what's now in the capsule.
+      currentFacts     = persisted.facts;
+      currentDecisions = persisted.decisions;
+    } else {
+      // Test/offline path: update local references without writing to storage.
+      currentFacts     = planFacts;
+      currentDecisions = planDecisions;
+    }
+
+  } else if (step === "planning-done") {
+    // ── Resuming after kill ─────────────────────────────────────────────────
+    console.log("[reproducer] 🔄 Resuming from planning-done checkpoint (container was killed)");
+
+    const planJson = extractTaggedFact(capsule.facts, "reproducer:plan");
+    if (planJson) {
+      try {
+        plan = JSON.parse(planJson) as TestPlan;
+        console.log(
+          `[reproducer] Restored plan: ${plan.approach} — ` +
+          `${plan.test_cases.length} test case(s)`,
+        );
+      } catch {
+        console.warn("[reproducer] Could not parse restored plan, will re-derive from bugs");
+      }
+    }
+  } else {
+    console.log(`[reproducer] Unexpected step "${step}" — proceeding with test writing`);
+  }
+
+  // ── Step 2: Write reproduction tests ─────────────────────────────────────
+
+  console.log("[reproducer] Step 2 — Writing reproduction tests…");
+
+  const planContext = plan
+    ? `Test plan:\n${JSON.stringify(plan, null, 2)}\n\n`
+    : "";
+
+  const raw2 = await callLLM({
+    tag:    `reproducer:${taskId}`,
+    system: TESTS_SYSTEM,
     user: [
-      `Identified bugs:`,
+      `${planContext}Identified bugs:`,
       bugsJson,
       ``,
       `Source file: ${DEFAULT_SOURCE_PATH}`,
@@ -101,9 +240,9 @@ export const reproducerHandler: Handler = async ({ capsule }) => {
 
   let output: ReproOutput;
   try {
-    output = JSON.parse(extractJSON(raw)) as ReproOutput;
+    output = JSON.parse(extractJSON(raw2)) as ReproOutput;
   } catch {
-    console.error("[reproducer] Failed to parse LLM output, storing raw");
+    console.error("[reproducer] Step 2: failed to parse test JSON, storing raw");
     output = { tests: [] };
   }
 
@@ -117,14 +256,13 @@ export const reproducerHandler: Handler = async ({ capsule }) => {
     update: {
       holder: "reproducer",
       facts: [
-        ...capsule.facts,
+        ...currentFacts,
         `[reproducer:tests] ${JSON.stringify(output)}`,
-        ...output.tests.map(
-          (t) => `[reproducer] ${t.bug_id} — ${t.test_name}`,
-        ),
+        `[reproducer:step] tests-written`,
+        ...output.tests.map((t) => `[reproducer] ${t.bug_id} — ${t.test_name}`),
       ],
       decisions: [
-        ...capsule.decisions,
+        ...currentDecisions,
         `[reproducer] Wrote ${testCount} reproduction test(s)`,
       ],
       next_action: "patch",
