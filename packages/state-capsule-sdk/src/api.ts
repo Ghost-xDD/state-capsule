@@ -52,6 +52,14 @@ export interface StateCapsuleConfig {
    * (useful for unit tests and offline usage).
    */
   chain?: ChainConfig;
+
+  /**
+   * Called after every successful createCapsule / updateCapsule.
+   * Intended for ENS task-pointer updates and other side-effects.
+   * MUST NOT throw — wrap in try/catch at the call site.
+   * Failures are logged as warnings; the capsule write is never blocked.
+   */
+  onAfterUpdate?: (capsule: Capsule) => Promise<void>;
 }
 
 export interface CreateCapsuleInput {
@@ -94,10 +102,11 @@ function kvChainKey(task_id: string): string {
 // ── StateCapsule client ───────────────────────────────────────────────────────
 
 export class StateCapsule {
-  private adapter:    StorageAdapter;
-  private privateKey: Uint8Array;
-  private publicKey:  Uint8Array;
-  private chain:      ChainAnchor | null;
+  private adapter:        StorageAdapter;
+  private privateKey:     Uint8Array;
+  private publicKey:      Uint8Array;
+  private chain:          ChainAnchor | null;
+  private onAfterUpdate?: (capsule: Capsule) => Promise<void>;
 
   constructor(config: StateCapsuleConfig = {}) {
     // Private key
@@ -120,6 +129,9 @@ export class StateCapsule {
 
     // On-chain anchor (optional)
     this.chain = config.chain ? new ChainAnchor(config.chain) : null;
+
+    // Post-write side-effect hook (ENS, metrics, etc.)
+    this.onAfterUpdate = config.onAfterUpdate;
   }
 
   get publicKeyHex(): string {
