@@ -15,7 +15,7 @@
  *   3. Error paths: missing upstream facts throw rather than silently fail
  */
 
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // ── Mock callLLM BEFORE any handler imports ───────────────────────────────────
 // vi.mock is hoisted by vitest so this runs before the import block below.
@@ -116,6 +116,16 @@ const GOLDEN_TESTS = {
   ],
 };
 
+// Reproducer now needs a plan LLM call (step 1) before writing tests (step 2).
+const GOLDEN_PLAN = {
+  approach:   "test each function with minimal inputs that expose the defect",
+  test_cases: [
+    { bug_id: "bug-1", function_name: "memoizeAsync", trigger_input: "concurrent calls", expected_output: "fn called once", actual_output: "fn called twice" },
+    { bug_id: "bug-2", function_name: "chunk", trigger_input: "chunk([1,2,3,4],2)", expected_output: "[[1,2],[3,4]]", actual_output: "[[1],[3]]" },
+    { bug_id: "bug-3", function_name: "partition", trigger_input: "evens predicate", expected_output: "[[2,4],[1,3]]", actual_output: "[[1,3],[2,4]]" },
+  ],
+};
+
 const PATCHED_SOURCE = `
 export function memoizeAsync(fn) {
   const cache    = new Map();
@@ -188,7 +198,8 @@ describe("Phase 4 — specialist handlers", () => {
   const sdk     = new StateCapsule({ storageAdapter: storage });
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks clears the mockResolvedValueOnce queue (clearAllMocks does not).
+    vi.resetAllMocks();
   });
 
   // ── 1. Full pipeline ────────────────────────────────────────────────────────
