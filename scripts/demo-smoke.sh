@@ -268,6 +268,12 @@ log "Tearing down swarm..."
 $COMPOSE down --remove-orphans -v
 
 log ""
-log "======================================"
-log " Smoke test PASSED ✅"
-log "======================================"
+if [[ "$WITH_LOBOTOMY" == "true" ]]; then
+  log "======================================"
+  log " Kill-and-resume dress-rehearsal PASSED ✅"
+  log "======================================"
+else
+  log "======================================"
+  log " Smoke test PASSED ✅"
+  log "======================================"
+fi
