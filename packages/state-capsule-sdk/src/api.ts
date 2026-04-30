@@ -189,6 +189,7 @@ export class StateCapsule {
       );
     }
 
+    await this._runAfterUpdate(capsule);
     return capsule;
   }
 
@@ -198,6 +199,7 @@ export class StateCapsule {
     const capsule = await this._buildUpdate(input);
     await this._persist(capsule);
     await this._anchorWithRebase(capsule);
+    await this._runAfterUpdate(capsule);
     return capsule;
   }
 
@@ -243,6 +245,19 @@ export class StateCapsule {
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────────
+
+  /**
+   * Fire-and-forget hook for side-effects (ENS, metrics, …).
+   * Never propagates errors — logs warnings instead.
+   */
+  private async _runAfterUpdate(capsule: Capsule): Promise<void> {
+    if (!this.onAfterUpdate) return;
+    try {
+      await this.onAfterUpdate(capsule);
+    } catch (err) {
+      console.warn(`[sdk] onAfterUpdate hook failed (non-fatal): ${err}`);
+    }
+  }
 
   private async _buildUpdate(input: UpdateCapsuleInput): Promise<Capsule> {
     const head = await this.restoreCapsule(input.task_id);
