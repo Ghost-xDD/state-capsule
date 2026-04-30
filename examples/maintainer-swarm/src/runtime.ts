@@ -24,6 +24,12 @@ import {
   type CapsuleEnvelope,
   type CapsuleAnnounce,
 } from "@state-capsule/sdk";
+import {
+  createRegistrarFromEnv,
+  buildEnsUpdateHook,
+  buildDelegationIssuer,
+  buildDelegationRevoker,
+} from "@state-capsule/ens";
 import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
