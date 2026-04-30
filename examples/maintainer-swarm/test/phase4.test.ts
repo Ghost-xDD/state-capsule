@@ -207,12 +207,14 @@ describe("Phase 4 — specialist handlers", () => {
   it("full pipeline: triager → reproducer → patcher → reviewer", async () => {
     const mockLLM = vi.mocked(callLLM);
 
-    // Seed responses in call order
+    // Seed responses in call order.
+    // Reproducer now makes 2 LLM calls: plan (step 1) then tests (step 2).
     mockLLM
-      .mockResolvedValueOnce(JSON.stringify(GOLDEN_BUGS))
-      .mockResolvedValueOnce(JSON.stringify(GOLDEN_TESTS))
-      .mockResolvedValueOnce(JSON.stringify(GOLDEN_PATCH))
-      .mockResolvedValueOnce(JSON.stringify(GOLDEN_VERDICT));
+      .mockResolvedValueOnce(JSON.stringify(GOLDEN_BUGS))    // triager
+      .mockResolvedValueOnce(JSON.stringify(GOLDEN_PLAN))    // reproducer: step 1 plan
+      .mockResolvedValueOnce(JSON.stringify(GOLDEN_TESTS))   // reproducer: step 2 tests
+      .mockResolvedValueOnce(JSON.stringify(GOLDEN_PATCH))   // patcher
+      .mockResolvedValueOnce(JSON.stringify(GOLDEN_VERDICT)); // reviewer
 
     // ── Genesis capsule ───────────────────────────────────────────────────────
 
@@ -336,15 +338,16 @@ describe("Phase 4 — specialist handlers", () => {
     const reviewDecisions = reviewResult.update.decisions ?? [];
     expect(reviewDecisions.some((d) => d.includes("APPROVED"))).toBe(true);
 
-    // Verify callLLM was called exactly 4 times (once per handler)
-    expect(mockLLM).toHaveBeenCalledTimes(4);
+    // Reproducer makes 2 LLM calls (plan + tests); total is 5.
+    expect(mockLLM).toHaveBeenCalledTimes(5);
 
     // Verify call tags follow naming convention
     const tags = mockLLM.mock.calls.map((c) => (c[0] as { tag: string }).tag);
     expect(tags[0]).toBe(`triager:${TASK_ID}`);
-    expect(tags[1]).toBe(`reproducer:${TASK_ID}`);
-    expect(tags[2]).toBe(`patcher:${TASK_ID}`);
-    expect(tags[3]).toBe(`reviewer:${TASK_ID}`);
+    expect(tags[1]).toMatch(/^reproducer:plan:/);     // step-1 plan
+    expect(tags[2]).toBe(`reproducer:${TASK_ID}`);   // step-2 tests
+    expect(tags[3]).toBe(`patcher:${TASK_ID}`);
+    expect(tags[4]).toBe(`reviewer:${TASK_ID}`);
   });
 
   // ── 2. REJECTED verdict path ────────────────────────────────────────────────

@@ -105,7 +105,7 @@ function makeCtx(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("Phase 5 — kill-and-resume", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.resetAllMocks(); });
 
   // ── 1. Full 2-step flow with checkpoint ────────────────────────────────────
 
