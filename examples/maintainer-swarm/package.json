@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
+    "@state-capsule/ens": "workspace:*",
     "@state-capsule/sdk": "workspace:*",
     "dotenv": "^16.0.0",
     "openai": "^4.0.0"

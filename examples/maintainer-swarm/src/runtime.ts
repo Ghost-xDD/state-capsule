@@ -71,6 +71,8 @@ export interface RuntimeConfig {
   privateKey?:     string;
   pollIntervalMs?: number;
   roleToPeerId?:   Record<AgentRole, string>;
+  /** ENS updates are opt-in — omitting this silently disables ENS. */
+  ensEnabled?:     boolean;
 }
 
 const CAPSULE_TOPIC = "capsule.updated";
@@ -78,12 +80,14 @@ const CAPSULE_TOPIC = "capsule.updated";
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
 export class AgentRuntime {
-  private axl:      AxlClient;
-  private gossip:   GossipSub | null = null;
-  private sdk:      StateCapsule;
-  private config:   RuntimeConfig;
-  private handler:  Handler | null = null;
-  private running   = false;
+  private axl:              AxlClient;
+  private gossip:           GossipSub | null = null;
+  private sdk:              StateCapsule;
+  private config:           RuntimeConfig;
+  private handler:          Handler | null = null;
+  private running           = false;
+  private issueDeleg:       (capsuleRef: string, fromRole: string, toRole: string) => Promise<string | undefined>;
+  private revokeDeleg:      (capsuleRef: string) => Promise<void>;
   private ownPeerId = "";
 
   constructor(config: RuntimeConfig) {
@@ -97,9 +101,23 @@ export class AgentRuntime {
       ? ZeroGConfigSchema.parse(config.storage)
       : undefined;
 
+    // ENS: build task-pointer hook + delegation helpers from env vars.
+    // All gracefully return no-ops when env vars are absent.
+    const registrar     = (config.ensEnabled !== false) ? createRegistrarFromEnv() : null;
+    const ensUpdateHook = buildEnsUpdateHook(registrar);
+    this.issueDeleg     = buildDelegationIssuer(registrar);
+    this.revokeDeleg    = buildDelegationRevoker(registrar);
+
+    if (registrar) {
+      console.log(`[${config.role}] ENS enabled (NameStone / ${process.env["ENS_PARENT_NAME"] ?? "?"})`);
+    } else {
+      console.log(`[${config.role}] ENS disabled (NAMESTONE_API_KEY not set)`);
+    }
+
     this.sdk = new StateCapsule({
       ...(config.privateKey ? { privateKey: config.privateKey } : {}),
       ...(storageConfig ? { storage: storageConfig } : {}),
+      onAfterUpdate: ensUpdateHook,
     });
   }
 
@@ -256,6 +274,9 @@ export class AgentRuntime {
       `capsule=${envelope.capsule_id.slice(0, 10)}...`
     );
 
+    // Revoke the delegation subname that granted us this handoff (burn single-use token).
+    await this.revokeDeleg(envelope.capsule_id);
+
     // If envelope carries a genesis payload, seed our local storage first
     // so restoreCapsule works without shared 0G storage for the first hop.
     if (envelope.payload?.["capsule"]) {
@@ -321,8 +342,14 @@ export class AgentRuntime {
     // Broadcast final update via GossipSub.
     await this._broadcastUpdate(updated);
 
-    // Forward handoff to next role via /send
+    // Forward handoff to next role via /send + issue delegation subname
     if (result.next_holder) {
+      // Issue delegation before forwarding (graceful — never blocks)
+      await this.issueDeleg(
+        updated.capsule_id,
+        this.config.role,
+        result.next_holder,
+      );
       await this._forwardHandoff(updated, result.next_holder);
     } else {
       console.log(`[${this.config.role}] 🏁 pipeline complete for task ${updated.task_id}`);
