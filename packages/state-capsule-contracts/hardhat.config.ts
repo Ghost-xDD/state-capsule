@@ -19,7 +19,7 @@ const config: HardhatUserConfig = {
     zerog: {
       url: process.env["OG_EVM_RPC"] ?? "https://evmrpc-testnet.0g.ai",
       accounts: [PRIVATE_KEY],
-      chainId: 16600,
+      chainId: 16602,
     },
   },
   paths: {

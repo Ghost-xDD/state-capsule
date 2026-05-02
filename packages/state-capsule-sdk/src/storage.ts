@@ -129,43 +129,61 @@ export class ZeroGStorage implements StorageAdapter {
   // ── KV (mutable head) ───────────────────────────────────────────────────
 
   async kvSet(key: string, value: Uint8Array): Promise<string> {
-    const [nodes, nodesErr] = await this.indexer.selectNodes(1);
-    if (nodesErr) throw new Error(`selectNodes: ${nodesErr}`);
+    try {
+      // Use 3 replicas so the segment lands on enough storage nodes that the
+      // public KV peer (zgs_kv) can find at least one via its peer list.
+      // With replicas=1 there's only a ~50% chance the KV node is peered with
+      // the single node that holds the segment (0G team recommendation).
+      const [nodes, nodesErr] = await this.indexer.selectNodes(3);
+      if (nodesErr) throw new Error(`selectNodes: ${nodesErr}`);
 
-    // DL-001 fix: pass signer-connected Contract, not raw address string.
-    // Cast signer to any to bridge ESM↔CJS ethers type boundary.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const flowContract = getFlowContract(this.config.flowContract, this.signer as any);
-    const batcher = new Batcher(1, nodes, flowContract, this.config.evmRpc);
+      // DL-001 fix: pass signer-connected Contract, not raw address string.
+      // Cast signer to any to bridge ESM↔CJS ethers type boundary.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const flowContract = getFlowContract(this.config.flowContract, this.signer as any);
+      const batcher = new Batcher(3, nodes, flowContract, this.config.evmRpc);
 
-    const keyBytes = new TextEncoder().encode(key);
-    batcher.streamDataBuilder.set(this.config.kvStreamId, keyBytes, value);
+      const keyBytes = new TextEncoder().encode(key);
+      batcher.streamDataBuilder.set(this.config.kvStreamId, keyBytes, value);
 
-    const [tx, batchErr] = await batcher.exec();
-    if (batchErr) throw new Error(`KV write: ${batchErr}`);
+      const [tx, batchErr] = await batcher.exec();
+      if (batchErr) throw new Error(`KV write: ${batchErr}`);
 
-    return (tx as { txHash: string }).txHash;
+      return (tx as { txHash: string }).txHash;
+    } catch (err) {
+      // KV node is an unreliable public testnet endpoint — degrade gracefully
+      // rather than failing the entire pipeline. Blob storage is the primary
+      // store; KV is best-effort mutable head.
+      console.warn(`[0G KV] kvSet failed (non-fatal): ${(err as Error).message}`);
+      return "0x" + "00".repeat(32);
+    }
   }
 
   async kvGet(key: string): Promise<Uint8Array | null> {
-    const keyBytes = new TextEncoder().encode(key);
+    try {
+      const keyBytes = new TextEncoder().encode(key);
 
-    // SDK expects Bytes (Uint8Array) for the key; cast to any to bridge types
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await this.kvClient.getValue(
-      this.config.kvStreamId,
-      keyBytes as unknown as any
-    ) as { data?: string; size?: number } | string | null;
+      // SDK expects Bytes (Uint8Array) for the key; cast to any to bridge types
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await this.kvClient.getValue(
+        this.config.kvStreamId,
+        keyBytes as unknown as any
+      ) as { data?: string; size?: number } | string | null;
 
-    if (!result) return null;
+      if (!result) return null;
 
-    // SDK returns either a base64 string or { data, size } object
-    const b64 = typeof result === "string"
-      ? result
-      : (result as { data?: string }).data;
+      // SDK returns either a base64 string or { data, size } object
+      const b64 = typeof result === "string"
+        ? result
+        : (result as { data?: string }).data;
 
-    if (!b64 || b64 === "") return null;
-    return Uint8Array.from(Buffer.from(b64, "base64"));
+      if (!b64 || b64 === "") return null;
+      return Uint8Array.from(Buffer.from(b64, "base64"));
+    } catch (err) {
+      // KV node unavailable — treat as "not found" so the pipeline can proceed.
+      console.warn(`[0G KV] kvGet failed (non-fatal): ${(err as Error).message}`);
+      return null;
+    }
   }
 }
 

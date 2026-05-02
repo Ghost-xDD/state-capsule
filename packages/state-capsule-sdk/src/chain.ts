@@ -9,11 +9,18 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  keccak256,
+  toHex,
+  toBytes,
   type Hash,
   type Chain,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
+import { createRequire }   from "node:module";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve }         from "node:path";
+import { fileURLToPath }   from "node:url";
 
 // ── ABI (minimal — only what we call) ────────────────────────────────────────
 
@@ -76,7 +83,7 @@ export const CAPSULE_REGISTRY_ABI = [
 // ── 0G Chain definition ───────────────────────────────────────────────────────
 
 const zeroGGalileo: Chain = {
-  id:   16600,
+  id:   16602,
   name: "0G Galileo Testnet",
   nativeCurrency: { name: "A0GI", symbol: "A0GI", decimals: 18 },
   rpcUrls: {
@@ -180,8 +187,6 @@ export class ChainAnchor {
  * This is the canonical task identifier used on-chain.
  */
 export function taskIdToBytes32(taskId: string): Hex {
-  // Inline keccak256 via viem
-  const { keccak256, toHex, toBytes } = require("viem") as typeof import("viem");
   return keccak256(toHex(toBytes(taskId)));
 }
 
@@ -190,14 +195,10 @@ export function taskIdToBytes32(taskId: string): Hex {
  */
 function loadDeployedAddress(network: string): string | undefined {
   try {
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const { resolve }      = require("node:path") as typeof import("node:path");
-    const { fileURLToPath } = require("node:url") as typeof import("node:url");
-
-    const dir  = resolve(fileURLToPath(import.meta.url), "../../..");
-    const data = JSON.parse(
-      readFileSync(resolve(dir, "deployments.json"), "utf-8")
-    ) as Record<string, Record<string, string>>;
+    const dir  = resolve(fileURLToPath(import.meta.url), "../..");
+    const path = resolve(dir, "deployments.json");
+    if (!existsSync(path)) return undefined;
+    const data = JSON.parse(readFileSync(path, "utf-8")) as Record<string, Record<string, string>>;
     return data[network]?.["CapsuleRegistry"];
   } catch {
     return undefined;

@@ -90,8 +90,8 @@ export const ZeroGConfigSchema = z.object({
   flowContract:     z.string().default("0x22E03a6A89B950F1c82ec5e74F8eCa321a105296"),
   kvClientUrl:      z.string().url().default("http://3.101.147.150:6789"),
   kvStreamId:       z.string().default(
-    // keccak256("state-capsule-v1") — deterministic stream ID for all SDK data
-    "0x" + "sc01".repeat(8) + "0000000000000000"
+    // sha256("state-capsule-v1") — deterministic stream ID for all SDK data
+    "0x7a8b2231ea482419d127aa35d1d3480b79b6ebcdfe0e6fdec7e574ca5569963a"
   ),
 });
 

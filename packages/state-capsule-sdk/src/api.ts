@@ -107,6 +107,10 @@ export class StateCapsule {
   private publicKey:        Uint8Array;
   private chain:            ChainAnchor | null;
   private onAfterUpdate:    ((capsule: Capsule) => Promise<void>) | null;
+  /** In-process cache: capsule_id → Capsule (avoids round-trips for same-process pipelines) */
+  private _cache = new Map<string, Capsule>();
+  /** In-process chain log: task_id → ordered list of capsule_ids */
+  private _chains = new Map<string, string[]>();
 
   constructor(config: StateCapsuleConfig = {}) {
     // Private key
@@ -178,18 +182,13 @@ export class StateCapsule {
 
     await this._persist(capsule);
 
-    // Anchor genesis on-chain (parent = zero hash)
-    if (this.chain) {
-      const ZERO = "0x" + "00".repeat(32);
-      await this.chain.anchor(
-        taskIdToBytes32(capsule.task_id),
-        ZERO,
-        capsule.capsule_id,
-        capsule.log_root ?? ZERO,
-      );
-    }
+    // Anchor genesis on-chain — treated as best-effort like updateCapsule.
+    // StaleParent means another genesis was already anchored (e.g. from a
+    // previous run with the same task_id); we accept that gracefully.
+    await this._anchorWithRebase(capsule);
 
     await this._runAfterUpdate(capsule);
+    this._cache.set(capsule.capsule_id, capsule);
     return capsule;
   }
 
@@ -200,6 +199,7 @@ export class StateCapsule {
     await this._persist(capsule);
     await this._anchorWithRebase(capsule);
     await this._runAfterUpdate(capsule);
+    this._cache.set(capsule.capsule_id, capsule);
     return capsule;
   }
 
@@ -210,6 +210,17 @@ export class StateCapsule {
    * prior in-memory state — reads head from 0G KV, fetches blob by root hash.
    */
   async restoreCapsule(task_id: string): Promise<Capsule> {
+    // Fast path: check the in-memory chain log (same-process pipeline).
+    const chain = this._chains.get(task_id);
+    if (chain && chain.length > 0) {
+      const latestId = chain[chain.length - 1]!;
+      const cached = this._cache.get(latestId);
+      if (cached) return cached;
+    }
+
+    // Cold-start path: ask KV for the head pointer, then fetch the blob.
+    // KV may not have indexed the latest writes yet (async sync lag), so
+    // this is best-effort — throws only if both paths are unavailable.
     const headBytes = await this.adapter.kvGet(kvKey(task_id));
     if (!headBytes) {
       throw new Error(`No capsule found for task_id: ${task_id}`);
@@ -260,7 +271,11 @@ export class StateCapsule {
   }
 
   private async _buildUpdate(input: UpdateCapsuleInput): Promise<Capsule> {
-    const head = await this.restoreCapsule(input.task_id);
+    // Use the explicit parent if provided (in-process pipeline, no KV needed).
+    // Fall back to KV restore only for cross-process cold-starts.
+    const head = input.parent_capsule_id && this._cache.has(input.parent_capsule_id)
+      ? this._cache.get(input.parent_capsule_id)!
+      : await this.restoreCapsule(input.task_id);
     const now  = new Date().toISOString();
 
     const signable = {
@@ -295,65 +310,83 @@ export class StateCapsule {
     const encoded  = new TextEncoder().encode(JSON.stringify(capsule));
     const rootHash = await this.adapter.blobWrite(encoded);
 
-    await this.adapter.kvSet(kvKey(capsule.task_id), new TextEncoder().encode(rootHash));
-
-    const existing = await this.adapter.kvGet(kvChainKey(capsule.task_id));
-    const chain: string[] = existing
-      ? (JSON.parse(new TextDecoder().decode(existing)) as string[])
-      : [];
+    // ── In-memory chain log (fast path, no KV round-trip) ────────────────
+    const chain = this._chains.get(capsule.task_id) ?? [];
     chain.push(capsule.capsule_id);
-    await this.adapter.kvSet(
-      kvChainKey(capsule.task_id),
-      new TextEncoder().encode(JSON.stringify(chain)),
-    );
+    this._chains.set(capsule.task_id, chain);
+
+    // ── KV writes: sequential, after blob, non-blocking to the caller ─────
+    // Fired as a single microtask AFTER blobWrite completes so they don't
+    // race with the blob Batcher for the same wallet nonce.
+    // We intentionally do not await — the caller's pipeline continues.
+    void (async () => {
+      try {
+        await this.adapter.kvSet(kvKey(capsule.task_id), new TextEncoder().encode(rootHash));
+      } catch (e) {
+        console.warn(`[0G KV] head-write failed (non-fatal): ${(e as Error).message}`);
+      }
+      try {
+        await this.adapter.kvSet(
+          kvChainKey(capsule.task_id),
+          new TextEncoder().encode(JSON.stringify(chain)),
+        );
+      } catch (e) {
+        console.warn(`[0G KV] chain-write failed (non-fatal): ${(e as Error).message}`);
+      }
+    })();
   }
 
   /**
    * Anchor on-chain. On StaleParent revert, rebase once and retry.
-   * On second collision, throws.
+   *
+   * The entire anchor is wrapped so that KV unavailability (which prevents
+   * rebase) never kills a pipeline — blobs are the primary store, the
+   * on-chain anchor is a best-effort audit trail.
    */
   private async _anchorWithRebase(capsule: Capsule): Promise<void> {
     if (!this.chain) return;
 
-    const ZERO   = "0x" + "00".repeat(32);
+    const ZERO    = "0x" + "00".repeat(32);
     const logRoot = capsule.log_root ?? ZERO;
     const taskB32 = taskIdToBytes32(capsule.task_id);
 
+    const doAnchor = (parent: string, id: string, lr: string) =>
+      this.chain!.anchor(taskB32, parent, id, lr);
+
     try {
-      await this.chain.anchor(
-        taskB32,
-        capsule.parent_capsule_id ?? ZERO,
-        capsule.capsule_id,
-        logRoot,
-      );
-    } catch (err) {
-      if (!isStaleParentError(err)) throw err;
+      await doAnchor(capsule.parent_capsule_id ?? ZERO, capsule.capsule_id, logRoot);
+    } catch (firstErr) {
+      if (!isStaleParentError(firstErr)) {
+        console.warn(`[chain] anchor failed (non-fatal): ${(firstErr as Error).message}`);
+        return;
+      }
 
-      // Rebase: re-read the on-chain head and re-build our capsule on top
-      const onChainHead = await this.chain.head(taskB32);
-      const rebased = await this._buildUpdate({
-        task_id:           capsule.task_id,
-        parent_capsule_id: onChainHead.capsuleId,
-        holder:            capsule.holder,
-        facts:             capsule.facts,
-        constraints:       capsule.constraints,
-        decisions:         capsule.decisions,
-        pending_actions:   capsule.pending_actions,
-        next_action:       capsule.next_action,
-        counterparties:    capsule.counterparties,
-        log_root:          capsule.log_root,
-        ...(capsule.task_pointer ? { task_pointer: capsule.task_pointer } : {}),
-      });
+      // StaleParent: rebase once onto the on-chain tip, then retry.
+      try {
+        const onChainHead = await this.chain.head(taskB32);
+        const rebased = await this._buildUpdate({
+          task_id:           capsule.task_id,
+          parent_capsule_id: onChainHead.capsuleId,
+          holder:            capsule.holder,
+          facts:             capsule.facts,
+          constraints:       capsule.constraints,
+          decisions:         capsule.decisions,
+          pending_actions:   capsule.pending_actions,
+          next_action:       capsule.next_action,
+          counterparties:    capsule.counterparties,
+          log_root:          capsule.log_root,
+          ...(capsule.task_pointer ? { task_pointer: capsule.task_pointer } : {}),
+        });
 
-      await this._persist(rebased);
-
-      // Second attempt — throw on collision, do not retry infinitely
-      await this.chain.anchor(
-        taskB32,
-        rebased.parent_capsule_id ?? ZERO,
-        rebased.capsule_id,
-        rebased.log_root ?? ZERO,
-      );
+        await this._persist(rebased);
+        await doAnchor(
+          rebased.parent_capsule_id ?? ZERO,
+          rebased.capsule_id,
+          rebased.log_root ?? ZERO,
+        );
+      } catch (rebaseErr) {
+        console.warn(`[chain] anchor rebase failed (non-fatal): ${(rebaseErr as Error).message}`);
+      }
     }
   }
 }
