@@ -102,11 +102,11 @@ function kvChainKey(task_id: string): string {
 // ── StateCapsule client ───────────────────────────────────────────────────────
 
 export class StateCapsule {
-  private adapter:        StorageAdapter;
-  private privateKey:     Uint8Array;
-  private publicKey:      Uint8Array;
-  private chain:          ChainAnchor | null;
-  private onAfterUpdate?: (capsule: Capsule) => Promise<void>;
+  private adapter:          StorageAdapter;
+  private privateKey:       Uint8Array;
+  private publicKey:        Uint8Array;
+  private chain:            ChainAnchor | null;
+  private onAfterUpdate:    ((capsule: Capsule) => Promise<void>) | null;
 
   constructor(config: StateCapsuleConfig = {}) {
     // Private key
@@ -131,7 +131,7 @@ export class StateCapsule {
     this.chain = config.chain ? new ChainAnchor(config.chain) : null;
 
     // Post-write side-effect hook (ENS, metrics, etc.)
-    this.onAfterUpdate = config.onAfterUpdate;
+    this.onAfterUpdate = config.onAfterUpdate ?? null;
   }
 
   get publicKeyHex(): string {
@@ -251,7 +251,7 @@ export class StateCapsule {
    * Never propagates errors — logs warnings instead.
    */
   private async _runAfterUpdate(capsule: Capsule): Promise<void> {
-    if (!this.onAfterUpdate) return;
+    if (this.onAfterUpdate === null) return;
     try {
       await this.onAfterUpdate(capsule);
     } catch (err) {

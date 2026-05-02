@@ -30,9 +30,14 @@ export interface TaskPointerRecords {
   "capsule.task_id"?: string;
 }
 
-export interface ResolvedTaskPointer extends TaskPointerRecords {
-  label:     string;   // e.g. "task-1a2b3c4d"
-  full_name: string;   // e.g. "task-1a2b3c4d.maintainerswarm.eth"
+export interface ResolvedTaskPointer {
+  label:              string;   // e.g. "task-1a2b3c4d"
+  full_name:          string;   // e.g. "task-1a2b3c4d.maintainerswarm.eth"
+  "capsule.head":     string;
+  "capsule.holder":   string;
+  "capsule.log_root": string;
+  "capsule.status":   string;
+  "capsule.task_id"?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -92,15 +97,17 @@ export class TaskPointer {
     const domain    = (this.registrar as unknown as { cfg: { domain: string } }).cfg?.domain ?? "";
     const full_name = domain ? `${label}.${domain}` : label;
 
-    return {
+    const result: ResolvedTaskPointer = {
       label,
       full_name,
       "capsule.head":     records["capsule.head"]     ?? "",
       "capsule.holder":   records["capsule.holder"]   ?? "",
       "capsule.log_root": records["capsule.log_root"] ?? "",
       "capsule.status":   records["capsule.status"]   ?? "",
-      "capsule.task_id":  records["capsule.task_id"],
     };
+    const tid = records["capsule.task_id"];
+    if (tid !== undefined) result["capsule.task_id"] = tid;
+    return result;
   }
 
   /**

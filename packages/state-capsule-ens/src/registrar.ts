@@ -57,15 +57,16 @@ export class NameStoneRegistrar {
     const base = baseUrl(this.cfg.network);
     const url  = `${base}${endpoint}`;
 
-    const res = await fetch(url, {
+    const init: RequestInit = {
       method,
       headers: {
         "Content-Type": "application/json",
         "Authorization": this.cfg.apiKey,
       },
-      body:   body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15_000),
-    });
+    };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const res = await fetch(url, init);
 
     const text = await res.text();
     if (!res.ok) {

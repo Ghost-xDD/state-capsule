@@ -22,6 +22,11 @@ config({ path: resolve(__dirname, "../../../../.env"), override: true });
 
 import { StateCapsule, createMemoryStorage } from "@state-capsule/sdk";
 import { AxlClient, type CapsuleEnvelope } from "@state-capsule/sdk";
+import {
+  createRegistrarFromEnv,
+  buildEnsUpdateHook,
+  taskLabel,
+} from "@state-capsule/ens";
 
 async function main() {
   const triagerUrl    = process.env["TRIAGER_AXL_URL"]    ?? "http://127.0.0.1:9101";
@@ -39,8 +44,24 @@ async function main() {
   const taskId = `bug-${Date.now()}`;
   console.log(`[seed] Creating task: ${taskId}`);
 
+  // ENS: build task pointer hook (no-op if NAMESTONE_API_KEY not set)
+  const registrar     = createRegistrarFromEnv();
+  const ensUpdateHook = buildEnsUpdateHook(registrar);
+  const parentName    = process.env["ENS_PARENT_NAME"] ?? "maintainerswarm.eth";
+  const pointerLabel  = taskLabel(taskId);
+  const taskPointer   = registrar ? `${pointerLabel}.${parentName}` : undefined;
+
+  if (taskPointer) {
+    console.log(`[seed] ENS task pointer: ${taskPointer}`);
+  } else {
+    console.log(`[seed] ENS disabled (NAMESTONE_API_KEY not set)`);
+  }
+
   const storage = createMemoryStorage();
-  const sdk     = new StateCapsule({ storageAdapter: storage });
+  const sdk     = new StateCapsule({
+    storageAdapter: storage,
+    onAfterUpdate:  ensUpdateHook,
+  });
 
   const capsule = await sdk.createCapsule({
     task_id: taskId,
@@ -48,6 +69,7 @@ async function main() {
       "Review examples/buggy-utils/src/index.ts and fix all bugs. " +
       "The library exports memoizeAsync, chunk, and partition — each contains exactly one defect.",
     holder:          "seed",
+    ...(taskPointer ? { task_pointer: taskPointer } : {}),
     facts:           [
       "Source file: /app/examples/buggy-utils/src/index.ts",
       "Three functions are exported: memoizeAsync, chunk, partition",
@@ -63,6 +85,10 @@ async function main() {
   });
 
   console.log(`[seed] Genesis capsule: ${capsule.capsule_id.slice(0, 16)}...`);
+  if (taskPointer) {
+    console.log(`[seed] Task pointer published: ${taskPointer}`);
+    console.log(`[seed] Verify: tsx scripts/resolve-task.ts ${taskId}`);
+  }
 
   const axl = new AxlClient({ baseUrl: triagerUrl });
 
