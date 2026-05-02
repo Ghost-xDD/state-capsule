@@ -1,0 +1,31 @@
+{
+  "name": "@state-capsule/adapter-openclaw",
+  "version": "0.1.0",
+  "description": "State Capsule adapter for OpenClaw — capsule-backed working memory for OpenClaw agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types":  "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build":     "tsc",
+    "typecheck": "tsc --noEmit",
+    "test":      "vitest run"
+  },
+  "peerDependencies": {
+    "@state-capsule/sdk": "workspace:*",
+    "openclaw":           ">=2026.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": { "optional": true }
+  },
+  "devDependencies": {
+    "@state-capsule/sdk": "workspace:*",
+    "typescript":         "^5.5.0",
+    "vitest":             "^2.0.0"
+  }
+}
