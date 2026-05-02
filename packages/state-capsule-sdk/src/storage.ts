@@ -21,6 +21,19 @@ import {
 import { ethers } from "ethers";
 import type { ZeroGConfig } from "./schema.js";
 
+// ── Targeted log filter ───────────────────────────────────────────────────────
+// Suppress only the high-frequency polling line that repeats ~50× per upload.
+// All other SDK output (tx hashes, node selection, upload progress) stays
+// visible as proof of real network activity.
+{
+  const orig = console.log.bind(console);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  console.log = (...args: any[]) => {
+    if (String(args[0] ?? "").startsWith("Waiting for storage node to sync")) return;
+    orig(...args);
+  };
+}
+
 // ── Interface ─────────────────────────────────────────────────────────────────
 
 export interface StorageAdapter {
@@ -83,6 +96,8 @@ export class ZeroGStorage implements StorageAdapter {
   private kvClient: KvClient;
   private signer:   ethers.Wallet;
   private config:   ZeroGConfig;
+  private _kvWarnedGet  = false;
+  private _kvWarnedSet  = false;
 
   constructor(config: ZeroGConfig) {
     this.config   = config;
@@ -151,10 +166,10 @@ export class ZeroGStorage implements StorageAdapter {
 
       return (tx as { txHash: string }).txHash;
     } catch (err) {
-      // KV node is an unreliable public testnet endpoint — degrade gracefully
-      // rather than failing the entire pipeline. Blob storage is the primary
-      // store; KV is best-effort mutable head.
-      console.warn(`[0G KV] kvSet failed (non-fatal): ${(err as Error).message}`);
+      if (!this._kvWarnedSet) {
+        console.warn(`[0G KV] kvSet unavailable (non-fatal): ${(err as Error).message.split("\n")[0]}`);
+        this._kvWarnedSet = true;
+      }
       return "0x" + "00".repeat(32);
     }
   }
@@ -180,8 +195,10 @@ export class ZeroGStorage implements StorageAdapter {
       if (!b64 || b64 === "") return null;
       return Uint8Array.from(Buffer.from(b64, "base64"));
     } catch (err) {
-      // KV node unavailable — treat as "not found" so the pipeline can proceed.
-      console.warn(`[0G KV] kvGet failed (non-fatal): ${(err as Error).message}`);
+      if (!this._kvWarnedGet) {
+        console.warn(`[0G KV] kvGet unavailable (non-fatal): ${(err as Error).message.split("\n")[0]}`);
+        this._kvWarnedGet = true;
+      }
       return null;
     }
   }
