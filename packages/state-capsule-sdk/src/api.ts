@@ -111,6 +111,7 @@ export class StateCapsule {
   private _cache = new Map<string, Capsule>();
   /** In-process chain log: task_id → ordered list of capsule_ids */
   private _chains = new Map<string, string[]>();
+  private _blobWarnedOnce = false;
 
   constructor(config: StateCapsuleConfig = {}) {
     // Private key
@@ -307,33 +308,39 @@ export class StateCapsule {
   }
 
   private async _persist(capsule: Capsule): Promise<void> {
-    const encoded  = new TextEncoder().encode(JSON.stringify(capsule));
-    const rootHash = await this.adapter.blobWrite(encoded);
-
-    // ── In-memory chain log (fast path, no KV round-trip) ────────────────
+    // ── In-memory chain log (always updated, no network) ─────────────────
     const chain = this._chains.get(capsule.task_id) ?? [];
     chain.push(capsule.capsule_id);
     this._chains.set(capsule.task_id, chain);
+    this._cache.set(capsule.capsule_id, capsule);
 
-    // ── KV writes: sequential, after blob, non-blocking to the caller ─────
-    // Fired as a single microtask AFTER blobWrite completes so they don't
-    // race with the blob Batcher for the same wallet nonce.
-    // We intentionally do not await — the caller's pipeline continues.
-    void (async () => {
-      try {
-        await this.adapter.kvSet(kvKey(capsule.task_id), new TextEncoder().encode(rootHash));
-      } catch (e) {
-        console.warn(`[0G KV] head-write failed (non-fatal): ${(e as Error).message}`);
+    // ── Blob write (awaited, non-fatal) ───────────────────────────────────
+    // Awaiting the blob write means the next operation (anchor) sees this
+    // tx in the mempool, and the shared TxNonceCoordinator will hand it the
+    // next sequential nonce. Wrapped in try/catch so that if 0G testnet has
+    // a bad day, the pipeline keeps moving (in-memory cache is the source
+    // of truth for the demo's restoreCapsule path).
+    try {
+      const encoded = new TextEncoder().encode(JSON.stringify(capsule));
+      await this.adapter.blobWrite(encoded);
+    } catch (err) {
+      const msg = (err as Error).message.split("\n")[0]!;
+      if (!this._blobWarnedOnce) {
+        console.warn(`[0G blob] blobWrite non-fatal: ${msg}`);
+        this._blobWarnedOnce = true;
       }
-      try {
-        await this.adapter.kvSet(
-          kvChainKey(capsule.task_id),
-          new TextEncoder().encode(JSON.stringify(chain)),
-        );
-      } catch (e) {
-        console.warn(`[0G KV] chain-write failed (non-fatal): ${(e as Error).message}`);
-      }
-    })();
+    }
+
+    // ── KV writes are intentionally skipped ──────────────────────────────
+    // The 0G public KV node lags the chain by minutes and the Batcher's
+    // exec() does its own internal storage-node-sync wait that holds the
+    // wallet-wide nonce coordinator hostage, blocking subsequent blob writes
+    // and on-chain anchors. The demo's restoreCapsule path uses the
+    // in-memory _cache/_chains maps (populated above), so KV adds no
+    // observable functionality while blocking the critical path.
+    //
+    // Re-enable once 0G ships a non-blocking KV write API or with a
+    // self-hosted zgs_kv operator. See https://docs.0g.ai/storage/kv .
   }
 
   /**

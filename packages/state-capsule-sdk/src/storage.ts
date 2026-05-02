@@ -20,18 +20,26 @@ import {
 } from "@0gfoundation/0g-ts-sdk";
 import { ethers } from "ethers";
 import type { ZeroGConfig } from "./schema.js";
+import { getCoordinator, type TxNonceCoordinator } from "./nonce.js";
 
 // ── Targeted log filter ───────────────────────────────────────────────────────
-// Suppress only the high-frequency polling line that repeats ~50× per upload.
-// All other SDK output (tx hashes, node selection, upload progress) stays
-// visible as proof of real network activity.
+// Suppress only the polling/wait lines. All other SDK output (tx hashes, node
+// selection, upload progress) stays visible as proof of real network activity.
 {
-  const orig = console.log.bind(console);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  console.log = (...args: any[]) => {
-    if (String(args[0] ?? "").startsWith("Waiting for storage node to sync")) return;
-    orig(...args);
+  const orig    = console.log.bind(console);
+  const origErr = console.error.bind(console);
+  const SILENT_PREFIXES = [
+    "Waiting for storage node to sync",
+    "Wait for log entry on storage node",
+  ];
+  const isSilent = (args: unknown[]) => {
+    const s = String(args[0] ?? "");
+    return SILENT_PREFIXES.some((p) => s.startsWith(p));
   };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  console.log = (...args: any[]) => { if (!isSilent(args)) orig(...args); };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  console.error = (...args: any[]) => { if (!isSilent(args)) origErr(...args); };
 }
 
 // ── Interface ─────────────────────────────────────────────────────────────────
@@ -92,19 +100,31 @@ export class MemoryStorage implements StorageAdapter {
 // ── 0G Storage adapter ────────────────────────────────────────────────────────
 
 export class ZeroGStorage implements StorageAdapter {
-  private indexer:  Indexer;
-  private kvClient: KvClient;
-  private signer:   ethers.Wallet;
-  private config:   ZeroGConfig;
+  private indexer:     Indexer;
+  private kvClient:    KvClient;
+  private signer:      ethers.Wallet;
+  private config:      ZeroGConfig;
+  private nonceCoord:  TxNonceCoordinator;
   private _kvWarnedGet  = false;
   private _kvWarnedSet  = false;
 
   constructor(config: ZeroGConfig) {
-    this.config   = config;
-    this.indexer  = new Indexer(config.indexerRpc);
-    this.kvClient = new KvClient(config.kvClientUrl);
-    const provider = new ethers.JsonRpcProvider(config.evmRpc);
-    this.signer    = new ethers.Wallet(config.privateKey, provider);
+    this.config     = config;
+    this.indexer    = new Indexer(config.indexerRpc);
+    this.kvClient   = new KvClient(config.kvClientUrl);
+    const provider  = new ethers.JsonRpcProvider(config.evmRpc);
+    this.signer     = new ethers.Wallet(config.privateKey, provider);
+    this.nonceCoord = getCoordinator(config.privateKey);
+  }
+
+  /** Initial-fetch helper passed to the coordinator. */
+  private async fetchPendingNonce(): Promise<number> {
+    return Number(
+      await this.signer.provider!.getTransactionCount(
+        await this.signer.getAddress(),
+        "pending",
+      ),
+    );
   }
 
   // ── Blob (Log primitive) ────────────────────────────────────────────────
@@ -116,11 +136,30 @@ export class ZeroGStorage implements StorageAdapter {
     const rootHash = tree.rootHash();
     if (!rootHash) throw new Error("0G merkle tree returned null rootHash");
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [, uploadErr] = await this.indexer.upload(memData, this.config.evmRpc, this.signer as any);
-    if (uploadErr) throw new Error(`0G upload: ${uploadErr}`);
-
-    return rootHash;
+    return this.nonceCoord.withNonce(
+      () => this.fetchPendingNonce(),
+      async (nonce) => {
+        const [, uploadErr] = await this.indexer.upload(
+          memData,
+          this.config.evmRpc,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          this.signer as any,
+          // Upload options:
+          //   nonce            — bypass ethers' internal nonce tracking and
+          //                      use the coordinator's value
+          //   finalityRequired — false: return as soon as the EVM tx hits the
+          //                      mempool, don't block on storage-node sync
+          //                      (which can take many minutes on testnet).
+          //                      The blob is committed to chain immediately;
+          //                      the storage node will eventually replicate.
+          //   skipTx           — false: still submit the chain tx
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { nonce, finalityRequired: false } as any,
+        );
+        if (uploadErr) throw new Error(`0G upload: ${uploadErr}`);
+        return rootHash;
+      },
+    );
   }
 
   async blobRead(rootHash: string): Promise<Uint8Array> {
@@ -144,27 +183,29 @@ export class ZeroGStorage implements StorageAdapter {
   // ── KV (mutable head) ───────────────────────────────────────────────────
 
   async kvSet(key: string, value: Uint8Array): Promise<string> {
+    // KV writes go through the coordinator's serial queue. The Batcher
+    // doesn't accept an explicit nonce, but serialization + the coordinator's
+    // retry-with-error-parsing converges quickly even on an unreliable RPC.
     try {
-      // Use 3 replicas so the segment lands on enough storage nodes that the
-      // public KV peer (zgs_kv) can find at least one via its peer list.
-      // With replicas=1 there's only a ~50% chance the KV node is peered with
-      // the single node that holds the segment (0G team recommendation).
-      const [nodes, nodesErr] = await this.indexer.selectNodes(3);
-      if (nodesErr) throw new Error(`selectNodes: ${nodesErr}`);
+      return await this.nonceCoord.withNonce(
+        () => this.fetchPendingNonce(),
+        async (_nonce) => {
+          const [nodes, nodesErr] = await this.indexer.selectNodes(3);
+          if (nodesErr) throw new Error(`selectNodes: ${nodesErr}`);
 
-      // DL-001 fix: pass signer-connected Contract, not raw address string.
-      // Cast signer to any to bridge ESM↔CJS ethers type boundary.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const flowContract = getFlowContract(this.config.flowContract, this.signer as any);
-      const batcher = new Batcher(3, nodes, flowContract, this.config.evmRpc);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const flowContract = getFlowContract(this.config.flowContract, this.signer as any);
+          const batcher = new Batcher(3, nodes, flowContract, this.config.evmRpc);
 
-      const keyBytes = new TextEncoder().encode(key);
-      batcher.streamDataBuilder.set(this.config.kvStreamId, keyBytes, value);
+          const keyBytes = new TextEncoder().encode(key);
+          batcher.streamDataBuilder.set(this.config.kvStreamId, keyBytes, value);
 
-      const [tx, batchErr] = await batcher.exec();
-      if (batchErr) throw new Error(`KV write: ${batchErr}`);
+          const [tx, batchErr] = await batcher.exec();
+          if (batchErr) throw new Error(`KV write: ${batchErr}`);
 
-      return (tx as { txHash: string }).txHash;
+          return (tx as { txHash: string }).txHash;
+        },
+      );
     } catch (err) {
       if (!this._kvWarnedSet) {
         console.warn(`[0G KV] kvSet unavailable (non-fatal): ${(err as Error).message.split("\n")[0]}`);

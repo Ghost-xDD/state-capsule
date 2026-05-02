@@ -17,10 +17,10 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
-import { createRequire }   from "node:module";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve }         from "node:path";
 import { fileURLToPath }   from "node:url";
+import { getCoordinator, type TxNonceCoordinator } from "./nonce.js";
 
 // ── ABI (minimal — only what we call) ────────────────────────────────────────
 
@@ -104,7 +104,8 @@ export interface ChainConfig {
 export class ChainAnchor {
   private walletClient;
   private publicClient;
-  private address: Hex;
+  private address:    Hex;
+  private nonceCoord: TxNonceCoordinator;
 
   constructor(config: ChainConfig) {
     const chain = {
@@ -136,13 +137,26 @@ export class ChainAnchor {
         "Run: pnpm --filter @state-capsule/contracts deploy:testnet"
       );
     }
-    this.address = addr as Hex;
+    this.address    = addr as Hex;
+    this.nonceCoord = getCoordinator(config.privateKey);
+  }
+
+  private async fetchPendingNonce(): Promise<number> {
+    return Number(
+      await this.publicClient.getTransactionCount({
+        address: this.walletClient.account!.address,
+        blockTag: "pending",
+      }),
+    );
   }
 
   /**
    * Anchor a capsule update on-chain.
-   * Returns the transaction hash.
-   * Throws StaleParentError if the parent check fails.
+   *
+   * Uses the shared TxNonceCoordinator so this anchor's nonce is monotonically
+   * sequential with any blob/KV writes happening in `ZeroGStorage` for the
+   * same wallet. The coordinator handles retries and chain-hint nonce
+   * recovery internally — see `nonce.ts`.
    */
   async anchor(
     taskId:          string,
@@ -150,20 +164,25 @@ export class ChainAnchor {
     newCapsuleId:    string,
     logRoot:         string,
   ): Promise<Hash> {
-    const hash = await this.walletClient.writeContract({
-      address: this.address,
-      abi:     CAPSULE_REGISTRY_ABI,
-      functionName: "anchor",
-      args: [
-        taskId          as Hex,
-        parentCapsuleId as Hex,
-        newCapsuleId    as Hex,
-        logRoot         as Hex,
-      ],
-    });
-
-    await this.publicClient.waitForTransactionReceipt({ hash });
-    return hash;
+    return this.nonceCoord.withNonce(
+      () => this.fetchPendingNonce(),
+      async (nonce) => {
+        const hash = await this.walletClient.writeContract({
+          address: this.address,
+          abi:     CAPSULE_REGISTRY_ABI,
+          functionName: "anchor",
+          nonce,
+          args: [
+            taskId          as Hex,
+            parentCapsuleId as Hex,
+            newCapsuleId    as Hex,
+            logRoot         as Hex,
+          ],
+        });
+        await this.publicClient.waitForTransactionReceipt({ hash });
+        return hash;
+      },
+    );
   }
 
   /**
