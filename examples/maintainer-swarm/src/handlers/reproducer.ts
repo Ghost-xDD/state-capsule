@@ -56,6 +56,13 @@ interface ReproOutput {
   tests: ReproTest[];
 }
 
+interface TriagedBug {
+  id: string;
+  name?: string;
+  description?: string;
+  reproduction_hint?: string;
+}
+
 // ── Source loading ────────────────────────────────────────────────────────────
 
 const DEFAULT_SOURCE_PATH =
@@ -75,6 +82,71 @@ function extractTaggedFact(facts: string[], tag: string): string | null {
 
 function getStep(facts: string[]): string | null {
   return extractTaggedFact(facts, "reproducer:step");
+}
+
+function parseBugs(bugsJson: string): TriagedBug[] {
+  try {
+    const parsed = JSON.parse(bugsJson) as { bugs?: TriagedBug[] };
+    return Array.isArray(parsed.bugs) ? parsed.bugs : [];
+  } catch {
+    return [];
+  }
+}
+
+function sanitizeOutput(output: unknown): ReproOutput {
+  const tests = (output as { tests?: unknown })?.tests;
+  return {
+    tests: Array.isArray(tests)
+      ? tests.filter((test): test is ReproTest => {
+          const t = test as Partial<ReproTest>;
+          return Boolean(t.bug_id && t.test_name && t.code);
+        })
+      : [],
+  };
+}
+
+function jsString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function synthesizeTestsFromPlan(plan: TestPlan | null, bugsJson: string): ReproOutput {
+  const planCases = plan?.test_cases ?? [];
+  const bugs = parseBugs(bugsJson);
+
+  const testsFromPlan = planCases.map((testCase, index): ReproTest => {
+    const expected = testCase.expected_output || "expected corrected behavior";
+    const actual = testCase.actual_output || "current buggy behavior";
+    const trigger = testCase.trigger_input || "the reproduced input";
+    return {
+      bug_id: testCase.bug_id || `bug-${index + 1}`,
+      test_name: `${testCase.function_name || "target"} reproduces ${testCase.bug_id || `bug-${index + 1}`}`,
+      code: [
+        `import assert from "node:assert/strict";`,
+        ``,
+        `// Synthetic reproduction generated from the restored State Capsule plan.`,
+        `// Trigger: ${trigger}`,
+        `const expected = ${jsString(expected)};`,
+        `const actualFromBuggyCode = ${jsString(actual)};`,
+        `assert.strictEqual(actualFromBuggyCode, expected);`,
+      ].join("\n"),
+    };
+  });
+
+  if (testsFromPlan.length > 0) return { tests: testsFromPlan };
+
+  return {
+    tests: bugs.map((bug, index): ReproTest => ({
+      bug_id: bug.id || `bug-${index + 1}`,
+      test_name: bug.name || `Reproduces ${bug.id || `bug-${index + 1}`}`,
+      code: [
+        `import assert from "node:assert/strict";`,
+        ``,
+        `// Synthetic reproduction generated from triage because the model returned no tests.`,
+        `// Bug: ${bug.description ?? bug.reproduction_hint ?? "No description provided"}`,
+        `assert.fail(${jsString(`Reproduction needed for ${bug.id || `bug-${index + 1}`}`)});`,
+      ].join("\n"),
+    })),
+  };
 }
 
 // ── System prompts ────────────────────────────────────────────────────────────
@@ -223,27 +295,36 @@ export const reproducerHandler: Handler = async (ctx) => {
     ? `Test plan:\n${JSON.stringify(plan, null, 2)}\n\n`
     : "";
 
-  const raw2 = await callLLM({
-    tag:    `reproducer:${taskId}`,
-    system: TESTS_SYSTEM,
-    user: [
-      `${planContext}Identified bugs:`,
-      bugsJson,
-      ``,
-      `Source file: ${DEFAULT_SOURCE_PATH}`,
-      `\`\`\`typescript`,
-      source,
-      `\`\`\``,
-    ].join("\n"),
-    maxTokens: 3000,
-  });
-
   let output: ReproOutput;
   try {
-    output = JSON.parse(extractJSON(raw2)) as ReproOutput;
-  } catch {
-    console.error("[reproducer] Step 2: failed to parse test JSON, storing raw");
+    const raw2 = await callLLM({
+      tag:    `reproducer:${taskId}`,
+      system: TESTS_SYSTEM,
+      user: [
+        `${planContext}Identified bugs:`,
+        bugsJson,
+        ``,
+        `Source file: ${DEFAULT_SOURCE_PATH}`,
+        `\`\`\`typescript`,
+        source,
+        `\`\`\``,
+      ].join("\n"),
+      maxTokens: 3000,
+    });
+
+    output = sanitizeOutput(JSON.parse(extractJSON(raw2)));
+  } catch (err) {
+    console.error(`[reproducer] Step 2: failed to generate/parse test JSON, using restored-plan fallback: ${err}`);
     output = { tests: [] };
+  }
+
+  if (output.tests.length === 0) {
+    output = synthesizeTestsFromPlan(plan, bugsJson);
+    if (output.tests.length > 0) {
+      console.warn(
+        `[reproducer] Model returned 0 tests; synthesized ${output.tests.length} from restored capsule state`,
+      );
+    }
   }
 
   const testCount = output.tests.length;

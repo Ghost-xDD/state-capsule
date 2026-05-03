@@ -298,6 +298,22 @@ function parseLine(entry: RunEntry, raw: string): void {
     pushActivity(entry, { type: "info", agent: "reproducer", message: `Reproducer planned ${n} test cases` });
     return;
   }
+  const restoredPlanMatch = line.match(/\[reproducer\] Restored plan: (.+?)\s*—\s*(\d+) test/);
+  if (restoredPlanMatch) {
+    const n = parseInt(restoredPlanMatch[2]!, 10);
+    bumpAgent(entry, "reproducer", {
+      status: "resuming",
+      activity: "restored saved test plan",
+      summary: `${n} tests restored`,
+      count: n,
+    });
+    pushActivity(entry, {
+      type: "resume",
+      agent: "reproducer",
+      message: `Reproducer restored ${n} planned test cases from capsule`,
+    });
+    return;
+  }
   if (/step-1 checkpoint → 0G/.test(line)) {
     pushActivity(entry, { type: "checkpoint", agent: "reproducer", message: "✓ Step-1 checkpoint persisted to 0G" });
     return;
@@ -341,6 +357,21 @@ function parseLine(entry: RunEntry, raw: string): void {
     const n = parseInt(wroteMatch[1]!, 10);
     bumpAgent(entry, "reproducer", { summary: `${n} tests written`, count: n });
     pushActivity(entry, { type: "info", agent: "reproducer", message: `Reproducer wrote ${n} reproduction tests` });
+    return;
+  }
+  const synthesizedTests = line.match(/\[reproducer\] Model returned 0 tests; synthesized (\d+) from restored capsule state/);
+  if (synthesizedTests) {
+    const n = parseInt(synthesizedTests[1]!, 10);
+    bumpAgent(entry, "reproducer", {
+      activity: "synthesized tests from restored plan",
+      summary: `${n} tests synthesized`,
+      count: n,
+    });
+    pushActivity(entry, {
+      type: "info",
+      agent: "reproducer",
+      message: `Reproducer synthesized ${n} tests from restored capsule state`,
+    });
     return;
   }
 
