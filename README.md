@@ -38,6 +38,9 @@
 - [Quick Start](#quick-start)
 - [Sponsor Integration Depth](#sponsor-integration-depth)
 - [Framework Adapters](#framework-adapters)
+  - [OpenClaw Adapter](#openclaw-adapter)
+  - [LangChain.js Adapter](#langchainjs-adapter)
+  - [Vercel AI SDK Adapter](#vercel-ai-sdk-adapter)
 - [Repository Layout](#repository-layout)
 - [Environment](#environment)
 - [Development Commands](#development-commands)
@@ -406,7 +409,7 @@ Adapters are what make State Capsule a framework primitive instead of a bespoke 
 | **Vercel AI SDK** | `@state-capsule/adapter-vercel-ai` | `onStepFinish` middleware for `generateText` / `streamText` | Step text, tool calls, finish reason, continued state |
 | **LlamaIndex** | planned | Memory backend | Capsule-backed task memory |
 
-### Adapter Examples
+### OpenClaw Adapter
 
 OpenClaw memory flush:
 
@@ -420,6 +423,8 @@ const context = await memory.read();
 await memory.write(context + "\n## Facts\n- user prefers TypeScript");
 ```
 
+### LangChain.js Adapter
+
 LangChain Runnable wrapper:
 
 ```ts
@@ -431,6 +436,8 @@ const memory = new StateCapsuleMemory(sdk, {
 const wrapped = withCapsuleMemory(chain, memory);
 const result = await wrapped.invoke({ input: "What's next?" });
 ```
+
+### Vercel AI SDK Adapter
 
 Vercel AI SDK step checkpoint:
 
