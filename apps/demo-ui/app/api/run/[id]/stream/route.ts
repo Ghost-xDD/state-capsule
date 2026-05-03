@@ -16,6 +16,7 @@ export async function GET(
   const lastIdHeader = req.headers.get("last-event-id");
   const lastEventId  = lastIdHeader ? parseInt(lastIdHeader, 10) : -1;
   let cursor = Number.isFinite(lastEventId) && lastEventId >= 0 ? lastEventId + 1 : 0;
+  let activityCursor = 0;
 
   const stream = new ReadableStream({
     start(controller) {
@@ -30,9 +31,12 @@ export async function GET(
         );
       }
 
-      // Tell the browser to retry far in the future on close. This stops the
-      // built-in reconnect storm when the server intentionally finishes.
       controller.enqueue(enc.encode("retry: 86400000\n\n"));
+
+      // Hash the agent state so we only emit when something actually changed.
+      // Using `pulse` (incremented on every mutation in run-store) gives us a
+      // cheap dirty-bit per agent.
+      let lastAgentSig = "";
 
       function tick() {
         if (closed) return;
@@ -45,6 +49,7 @@ export async function GET(
           return;
         }
 
+        // 1) Stream raw lines (still useful for the collapsible debug panel).
         while (cursor < entry.lines.length) {
           const idx  = cursor;
           const line = entry.lines[idx]!;
@@ -52,11 +57,32 @@ export async function GET(
           cursor++;
         }
 
+        // 2) Stream structured agent state when it changes.
+        const sig = (Object.values(entry.agents) as { pulse: number }[])
+          .map((a) => a.pulse)
+          .join(",");
+        if (sig !== lastAgentSig) {
+          send(null, {
+            type:    "agents",
+            agents:  entry.agents,
+            capsule: entry.capsule,
+          });
+          lastAgentSig = sig;
+        }
+
+        // 3) Stream new activity events.
+        while (activityCursor < entry.activity.length) {
+          const ev = entry.activity[activityCursor]!;
+          send(null, { type: "activity", event: ev });
+          activityCursor++;
+        }
+
         if (entry.done) {
           send(null, {
-            type: "done",
+            type:    "done",
             capsule: entry.capsule,
-            error: entry.error,
+            agents:  entry.agents,
+            error:   entry.error,
             elapsed: Date.now() - entry.startedAt,
           });
           closed = true;
@@ -67,7 +93,6 @@ export async function GET(
         setTimeout(tick, 150);
       }
 
-      // Close the writer if the client disconnects (browser tab close).
       req.signal.addEventListener("abort", () => {
         closed = true;
         try { controller.close(); } catch { /* already closed */ }
@@ -79,9 +104,9 @@ export async function GET(
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
+      "Content-Type":   "text/event-stream",
+      "Cache-Control":  "no-cache, no-transform",
+      Connection:       "keep-alive",
       "X-Accel-Buffering": "no",
     },
   });

@@ -2,17 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap");
-
 :root {
   color-scheme: dark;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-::selection {
-  background: rgba(99, 102, 241, 0.4);
+html,
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
-.ansi-line {
-  white-space: pre-wrap;
-  word-break: break-all;
+.font-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero", "ss02";
+}
+
+/* Subtle scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
+  background-clip: padding-box;
+}
+
+/* ── Motion primitives ──────────────────────────────────────────────────── */
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+.pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(99, 102, 241, 0) 0%,
+    rgba(99, 102, 241, 0.55) 50%,
+    rgba(99, 102, 241, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes slide-in {
+  0%   { transform: translateY(4px); opacity: 0; }
+  100% { transform: translateY(0);   opacity: 1; }
+}
+.slide-in { animation: slide-in 0.22s ease-out both; }
+
+/* ── Kill / resume drama (toned down) ───────────────────────────────────── */
+
+@keyframes kill-shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-2px, 0, 0); }
+  75% { transform: translate3d(2px, 0, 0); }
+}
+.animate-kill-shake { animation: kill-shake 0.32s ease-in-out 1; }
+
+@keyframes screen-flash {
+  0%   { opacity: 0;   }
+  18%  { opacity: 0.18; }
+  100% { opacity: 0;   }
+}
+.animate-screen-flash { animation: screen-flash 0.55s ease-out forwards; }
+
+@keyframes container-rise {
+  0%   { transform: translateY(8px); opacity: 0; }
+  100% { transform: translateY(0);   opacity: 1; }
+}
+.animate-container-rise { animation: container-rise 0.45s cubic-bezier(.16,.84,.44,1) both; }
+
+/* Status ring glow — used sparingly */
+.ring-active   { box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.55), 0 0 24px -6px rgba(99, 102, 241, 0.45); }
+.ring-resuming { box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.65), 0 0 24px -6px rgba(168, 85, 247, 0.5); }
+.ring-killed   { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.55),  0 0 18px -6px rgba(239, 68, 68, 0.45); }
+.ring-done     { box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.35); }
+
+/* Tasteful grid background */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
 }
