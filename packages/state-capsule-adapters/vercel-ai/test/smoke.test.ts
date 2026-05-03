@@ -3,7 +3,7 @@
  * Uses in-memory StateCapsule; no real model or `ai` package required.
  */
 import { describe, it, expect } from "vitest";
-import { StateCapsule }         from "@state-capsule/sdk";
+import { StateCapsule }         from "@ghostxd/state-capsule-sdk";
 import { createCapsuleMiddleware } from "../src/index.js";
 
 describe("vercel-ai adapter smoke", () => {

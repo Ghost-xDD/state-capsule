@@ -1,5 +1,5 @@
 {
-  "name": "@state-capsule/ens",
+  "name": "@ghostxd/state-capsule-ens",
   "version": "0.1.0",
   "description": "ENS task pointers + delegation subnames for State Capsule (backed by NameStone off-chain CCIP-Read)",
   "type": "module",

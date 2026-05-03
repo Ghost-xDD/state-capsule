@@ -20,6 +20,9 @@ importers:
 
   apps/demo-ui:
     dependencies:
+      lucide-react:
+        specifier: ^1.6.0
+        version: 1.14.0(react@18.3.1)
       next:
         specifier: ^14.2.0
         version: 14.2.35(@opentelemetry/api@1.9.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -51,6 +54,9 @@ importers:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.17)
 
   examples/buggy-utils:
     devDependencies:
@@ -66,10 +72,10 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.40.0
         version: 0.40.1
-      '@state-capsule/ens':
+      '@ghostxd/state-capsule-ens':
         specifier: workspace:*
         version: link:../../packages/state-capsule-ens
-      '@state-capsule/sdk':
+      '@ghostxd/state-capsule-sdk':
         specifier: workspace:*
         version: link:../../packages/state-capsule-sdk
       dotenv:
@@ -94,12 +100,12 @@ importers:
 
   packages/state-capsule-adapters/langchain:
     devDependencies:
+      '@ghostxd/state-capsule-sdk':
+        specifier: workspace:*
+        version: link:../../state-capsule-sdk
       '@langchain/core':
         specifier: ^1.1.43
         version: 1.1.43(@opentelemetry/api@1.9.0)(openai@6.35.0(ws@8.20.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.4.2))(ws@8.20.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
-      '@state-capsule/sdk':
-        specifier: workspace:*
-        version: link:../../state-capsule-sdk
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -108,14 +114,13 @@ importers:
         version: 2.1.9(@types/node@22.19.17)
 
   packages/state-capsule-adapters/openclaw:
-    dependencies:
-      openclaw:
-        specifier: '>=2026.0.0'
-        version: 2026.4.29(@cfworker/json-schema@4.1.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
     devDependencies:
-      '@state-capsule/sdk':
+      '@ghostxd/state-capsule-sdk':
         specifier: workspace:*
         version: link:../../state-capsule-sdk
+      openclaw:
+        specifier: ^2026.4.29
+        version: 2026.4.29(@cfworker/json-schema@4.1.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -129,7 +134,7 @@ importers:
         specifier: '>=4.0.0'
         version: 6.0.174(zod@4.4.2)
     devDependencies:
-      '@state-capsule/sdk':
+      '@ghostxd/state-capsule-sdk':
         specifier: workspace:*
         version: link:../../state-capsule-sdk
       typescript:
@@ -3414,6 +3419,11 @@ packages:
 
   lru_map@0.3.3:
     resolution: {integrity: sha512-Pn9cox5CsMYngeDbmChANltQl+5pi6XmTrraMSzhPmMBbmgcxmqWry0U3PGapCU1yB4/LqCcom7qhHZiF/jGfQ==}
+
+  lucide-react@1.14.0:
+    resolution: {integrity: sha512-+1mdWcfSJVUsaTIjN9zoezmUhfXo5l0vP7ekBMPo3jcS/aIkxHnXqAPsByszMZx/Y8oQBRJxJx5xg+RH3urzxA==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -8803,6 +8813,10 @@ snapshots:
   lru-cache@7.18.3: {}
 
   lru_map@0.3.3: {}
+
+  lucide-react@1.14.0(react@18.3.1):
+    dependencies:
+      react: 18.3.1
 
   magic-string@0.30.21:
     dependencies:

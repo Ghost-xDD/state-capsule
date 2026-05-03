@@ -34,6 +34,9 @@
 - [Why It Exists](#why-it-exists)
 - [Architecture](#architecture)
 - [SDK](#sdk)
+  - [Install from npm](#install-from-npm)
+  - [Core API](#core-api)
+  - [Simple Framework Examples](#simple-framework-examples)
 - [MaintainerSwarm Demo](#maintainerswarm-demo)
 - [Quick Start](#quick-start)
 - [Sponsor Integration Depth](#sponsor-integration-depth)
@@ -41,9 +44,7 @@
   - [Gensyn AXL](#gensyn-axl)
   - [ENS](#ens)
 - [Framework Adapters](#framework-adapters)
-  - [OpenClaw Adapter](#openclaw-adapter)
-  - [LangChain.js Adapter](#langchainjs-adapter)
-  - [Vercel AI SDK Adapter](#vercel-ai-sdk-adapter)
+- [Integration Guide](#integration-guide)
 - [Repository Layout](#repository-layout)
 - [Environment](#environment)
 - [Development Commands](#development-commands)
@@ -56,14 +57,14 @@ Agents are getting longer-running, more specialized, and more distributed. But m
 
 **State Capsule** is a TypeScript SDK and protocol for preserving the executable state of an agent task:
 
-| Primitive | What it captures | Why it matters |
-|:----------|:-----------------|:---------------|
-| **Capsule** | goal, facts, constraints, decisions, pending actions, next action, holder | A fresh agent can continue from structured state, not raw conversation history |
-| **Capsule chain** | signed parent-linked capsule revisions | Every handoff has provenance and tamper evidence |
-| **Storage head** | latest capsule pointer in 0G Storage KV | New processes can restore by `task_id` |
-| **Log root** | append-only capsule history in 0G Storage Log/blob roots | Observers can inspect the state lineage |
-| **Registry anchor** | current capsule head on 0G Chain | Concurrent writers are rejected and stale handoffs are visible |
-| **Task pointer** | optional ENS subname exposing live holder/head/status | Humans and agents can resolve task state by name |
+| Primitive           | What it captures                                                          | Why it matters                                                                 |
+| :------------------ | :------------------------------------------------------------------------ | :----------------------------------------------------------------------------- |
+| **Capsule**         | goal, facts, constraints, decisions, pending actions, next action, holder | A fresh agent can continue from structured state, not raw conversation history |
+| **Capsule chain**   | signed parent-linked capsule revisions                                    | Every handoff has provenance and tamper evidence                               |
+| **Storage head**    | latest capsule pointer in 0G Storage KV                                   | New processes can restore by `task_id`                                         |
+| **Log root**        | append-only capsule history in 0G Storage Log/blob roots                  | Observers can inspect the state lineage                                        |
+| **Registry anchor** | current capsule head on 0G Chain                                          | Concurrent writers are rejected and stale handoffs are visible                 |
+| **Task pointer**    | optional ENS subname exposing live holder/head/status                     | Humans and agents can resolve task state by name                               |
 
 State Capsule is **not** a chatbot and not a single demo app. It is the continuity layer underneath agent frameworks.
 
@@ -73,13 +74,13 @@ State Capsule is **not** a chatbot and not a single demo app. It is the continui
 
 This repository contains both the protocol implementation and a flagship demo. They are intentionally separate:
 
-| Layer | Name | Purpose |
-|:------|:-----|:--------|
-| **Product** | `@state-capsule/sdk` | Reusable TypeScript SDK: create, update, restore, verify |
-| **Protocol** | Capsule schema + registry + storage layout | Portable state contract for agent handoffs |
-| **Integrations** | 0G, Gensyn AXL, ENS, adapters | Durability, coordination, task pointers, framework hooks |
-| **Demo** | MaintainerSwarm | A four-agent open-source maintenance swarm built on top of the SDK |
-| **UI** | `apps/demo-ui` | Local landing page and live demo dashboard |
+| Layer            | Name                                       | Purpose                                                            |
+| :--------------- | :----------------------------------------- | :----------------------------------------------------------------- |
+| **Product**      | `@ghostxd/state-capsule-sdk`               | Reusable TypeScript SDK: create, update, restore, verify           |
+| **Protocol**     | Capsule schema + registry + storage layout | Portable state contract for agent handoffs                         |
+| **Integrations** | 0G, Gensyn AXL, ENS, adapters              | Durability, coordination, task pointers, framework hooks           |
+| **Demo**         | MaintainerSwarm                            | A four-agent open-source maintenance swarm built on top of the SDK |
+| **UI**           | `apps/demo-ui`                             | Local landing page and live demo dashboard                         |
 
 **MaintainerSwarm proves the SDK. It is not the SDK.**
 
@@ -175,33 +176,45 @@ sequenceDiagram
 
 ## SDK
 
-The core package is `packages/state-capsule-sdk`.
+The public npm package is [`@ghostxd/state-capsule-sdk`](https://www.npmjs.com/package/@ghostxd/state-capsule-sdk). It contains the core capsule schema, signing, storage adapters, restore logic, chain anchoring helpers, AXL primitives, and sealed-summary helpers.
+
+### Install from npm
+
+```bash
+npm install @ghostxd/state-capsule-sdk
+```
+
+```bash
+pnpm add @ghostxd/state-capsule-sdk
+```
+
+Use it from TypeScript or modern Node ESM:
 
 ```ts
-import { StateCapsule, createMemoryStorage } from "@state-capsule/sdk";
+import { StateCapsule, createMemoryStorage } from '@ghostxd/state-capsule-sdk';
 
 const sdk = new StateCapsule({
   storageAdapter: createMemoryStorage(),
 });
 
 const genesis = await sdk.createCapsule({
-  task_id: "issue-482",
-  goal: "Reproduce and fix the failing test",
-  holder: "triager",
-  facts: ["User reports intermittent timeout in CI"],
-  next_action: "classify issue",
+  task_id: 'issue-482',
+  goal: 'Reproduce and fix the failing test',
+  holder: 'triager',
+  facts: ['User reports intermittent timeout in CI'],
+  next_action: 'classify issue',
 });
 
 const next = await sdk.updateCapsule({
   task_id: genesis.task_id,
   parent_capsule_id: genesis.capsule_id,
-  holder: "reproducer",
-  facts: [...genesis.facts, "Failure appears only under concurrent writes"],
-  decisions: ["Move investigation to sandboxed reproducer"],
-  next_action: "write minimal failing test",
+  holder: 'reproducer',
+  facts: [...genesis.facts, 'Failure appears only under concurrent writes'],
+  decisions: ['Move investigation to sandboxed reproducer'],
+  next_action: 'write minimal failing test',
 });
 
-const restored = await sdk.restoreCapsule("issue-482");
+const restored = await sdk.restoreCapsule('issue-482');
 console.log(restored.next_action); // "write minimal failing test"
 
 await sdk.verifyHandoff([genesis, next]);
@@ -209,32 +222,97 @@ await sdk.verifyHandoff([genesis, next]);
 
 ### Core API
 
-| Method | Purpose |
-|:-------|:--------|
-| `createCapsule(input)` | Create the genesis capsule for a task |
-| `updateCapsule(input)` | Extend the capsule chain with new actionable state |
-| `restoreCapsule(task_id)` | Recover the latest capsule from storage in a fresh process |
-| `verifyHandoff(capsules)` | Verify signatures and parent linkage from genesis to tip |
-| `bootstrapCapsule(raw)` | Seed a received capsule into local storage/cache |
-| `fetchSealedSummary(capsule)` | Produce or fetch a compact handoff summary |
+| Method                        | Purpose                                                    |
+| :---------------------------- | :--------------------------------------------------------- |
+| `createCapsule(input)`        | Create the genesis capsule for a task                      |
+| `updateCapsule(input)`        | Extend the capsule chain with new actionable state         |
+| `restoreCapsule(task_id)`     | Recover the latest capsule from storage in a fresh process |
+| `verifyHandoff(capsules)`     | Verify signatures and parent linkage from genesis to tip   |
+| `bootstrapCapsule(raw)`       | Seed a received capsule into local storage/cache           |
+| `fetchSealedSummary(capsule)` | Produce or fetch a compact handoff summary                 |
 
 ### Capsule Fields
 
-| Field | Meaning |
-|:------|:--------|
-| `capsule_id` | Content-derived 32-byte capsule identifier |
-| `task_id` | Stable ID for the workflow |
-| `parent_capsule_id` | Previous capsule head, or `null` for genesis |
+| Field                      | Meaning                                         |
+| :------------------------- | :---------------------------------------------- |
+| `capsule_id`               | Content-derived 32-byte capsule identifier      |
+| `task_id`                  | Stable ID for the workflow                      |
+| `parent_capsule_id`        | Previous capsule head, or `null` for genesis    |
 | `created_by` / `signature` | ed25519 authorship proof over canonical payload |
-| `goal` | Task objective |
-| `facts` | Verified observations |
-| `constraints` | Invariants future agents must respect |
-| `decisions` | Committed choices and rationale references |
-| `pending_actions` | Ordered queue of remaining work |
-| `next_action` | The immediate next step |
-| `holder` | Current agent or role responsible for the task |
-| `log_root` | 0G Storage root for the capsule write |
-| `task_pointer` | ENS name for human-readable resolution |
+| `goal`                     | Task objective                                  |
+| `facts`                    | Verified observations                           |
+| `constraints`              | Invariants future agents must respect           |
+| `decisions`                | Committed choices and rationale references      |
+| `pending_actions`          | Ordered queue of remaining work                 |
+| `next_action`              | The immediate next step                         |
+| `holder`                   | Current agent or role responsible for the task  |
+| `log_root`                 | 0G Storage root for the capsule write           |
+| `task_pointer`             | ENS name for human-readable resolution          |
+
+### Simple Framework Examples
+
+The SDK is framework-agnostic: most integrations need one restore before work starts and one capsule update after useful progress is made.
+
+LangChain-style memory checkpoint:
+
+```ts
+import { StateCapsule, createMemoryStorage } from '@ghostxd/state-capsule-sdk';
+
+const sdk = new StateCapsule({ storageAdapter: createMemoryStorage() });
+const taskId = 'langchain-ticket-42';
+
+const before = await sdk.createCapsule({
+  task_id: taskId,
+  goal: 'Answer support ticket with durable memory',
+  holder: 'langchain-agent',
+  next_action: 'call chain',
+});
+
+const output = await chain.invoke({
+  input: 'Summarize the customer issue',
+  capsule_context: before.facts.join('\n'),
+});
+
+await sdk.updateCapsule({
+  task_id: taskId,
+  parent_capsule_id: before.capsule_id,
+  holder: 'langchain-agent',
+  facts: [...before.facts, `chain output: ${String(output).slice(0, 500)}`],
+  decisions: ['Saved LangChain output as recoverable capsule state'],
+  next_action: 'continue support workflow',
+});
+```
+
+OpenClaw-style memory flush:
+
+```ts
+import { StateCapsule, createMemoryStorage } from '@ghostxd/state-capsule-sdk';
+
+const sdk = new StateCapsule({ storageAdapter: createMemoryStorage() });
+
+const capsule = await sdk.createCapsule({
+  task_id: 'openclaw-session-7',
+  goal: 'Persist working memory between OpenClaw turns',
+  holder: 'openclaw-agent',
+  facts: ['User prefers TypeScript', 'Project uses pnpm workspaces'],
+  decisions: ['Use strict mode throughout'],
+  pending_actions: ['open pull request'],
+  next_action: 'resume from memory',
+});
+
+const restored = await sdk.restoreCapsule(capsule.task_id);
+const openClawMemory = [
+  '## Facts',
+  ...restored.facts.map((fact) => `- ${fact}`),
+  '',
+  '## Decisions',
+  ...restored.decisions.map((decision) => `- ${decision}`),
+  '',
+  `## Next Action\n${restored.next_action}`,
+].join('\n');
+```
+
+For adapter patterns, 0G config, ENS hooks, LangChain memory wrappers, OpenClaw memory adapters, and Vercel AI SDK callbacks, see [INTEGRATION.md](./INTEGRATION.md).
 
 ---
 
@@ -242,12 +320,12 @@ await sdk.verifyHandoff([genesis, next]);
 
 MaintainerSwarm is the flagship proof: a multi-agent open-source maintenance workflow that survives a forced kill.
 
-| Agent | Responsibility | Why it is separate |
-|:------|:---------------|:-------------------|
-| **Triager** | Classifies the issue and identifies suspicious code | Starts the task and writes the first capsule |
-| **Reproducer** | Designs and writes failing tests | Runs untrusted code in a separate failure domain |
-| **Patcher** | Produces a concrete source diff | Can use a different model or trust boundary |
-| **Reviewer** | Accepts or rejects the patch | Adversarial review should not share patcher state |
+| Agent          | Responsibility                                      | Why it is separate                                |
+| :------------- | :-------------------------------------------------- | :------------------------------------------------ |
+| **Triager**    | Classifies the issue and identifies suspicious code | Starts the task and writes the first capsule      |
+| **Reproducer** | Designs and writes failing tests                    | Runs untrusted code in a separate failure domain  |
+| **Patcher**    | Produces a concrete source diff                     | Can use a different model or trust boundary       |
+| **Reviewer**   | Accepts or rejects the patch                        | Adversarial review should not share patcher state |
 
 ### Demo Flow
 
@@ -337,18 +415,18 @@ pnpm spike
 
 State Capsule is built as a **framework-level primitive** for 0G agent builders, not just an app that happens to call 0G. The SDK uses the full 0G stack as the durability layer for agent continuity.
 
-| 0G component | What we built | Why it matters |
-|:-------------|:--------------|:---------------|
-| **0G Storage KV** | Mutable capsule head keyed by `task_id` | Any fresh agent can resolve `task_id -> latest capsule` in one read |
-| **0G Storage blobs/logs** | Append-only capsule chain, stored as content-addressed payloads | Every state transition has an auditable provenance trail |
-| **0G Chain** | `CapsuleRegistry` anchor with stale-parent rejection | Concurrent writers cannot silently fork task state |
-| **0G Compute** | Sealed handoff summary for long capsule chains | A replacement agent can load verified context without replaying the whole log |
-| **SDK hooks** | `onAfterUpdate`, storage adapters, chain config, sealed summary API | Other frameworks can adopt the primitive without rewriting their runtime |
+| 0G component              | What we built                                                       | Why it matters                                                                |
+| :------------------------ | :------------------------------------------------------------------ | :---------------------------------------------------------------------------- |
+| **0G Storage KV**         | Mutable capsule head keyed by `task_id`                             | Any fresh agent can resolve `task_id -> latest capsule` in one read           |
+| **0G Storage blobs/logs** | Append-only capsule chain, stored as content-addressed payloads     | Every state transition has an auditable provenance trail                      |
+| **0G Chain**              | `CapsuleRegistry` anchor with stale-parent rejection                | Concurrent writers cannot silently fork task state                            |
+| **0G Compute**            | Sealed handoff summary for long capsule chains                      | A replacement agent can load verified context without replaying the whole log |
+| **SDK hooks**             | `onAfterUpdate`, storage adapters, chain config, sealed summary API | Other frameworks can adopt the primitive without rewriting their runtime      |
 
 Deployed registry:
 
-| Network | Contract | Address |
-|:--------|:---------|:--------|
+| Network    | Contract          | Address                                      |
+| :--------- | :---------------- | :------------------------------------------- |
 | 0G testnet | `CapsuleRegistry` | `0x0C90470bFf685eFEDc03Ffff5ACBfFebb0D0cd03` |
 
 The core value for 0G: State Capsule turns 0G Storage, Compute, and Chain into a reusable **agent-brain continuity layer**. MaintainerSwarm is the proof that the primitive handles a real multi-agent workflow under failure.
@@ -357,13 +435,13 @@ The core value for 0G: State Capsule turns 0G Storage, Compute, and Chain into a
 
 AXL is the **only live coordination fabric** in MaintainerSwarm. There is no fallback broker in the demo path: State Capsule handles durable state, and AXL handles role-to-role messaging across separate processes.
 
-| AXL surface | Usage |
-|:------------|:------|
-| **4 separate nodes** | Triager, Reproducer, Patcher, Reviewer each run as their own role/process |
-| `/send` / `/recv` | Capsule handoff signals and coordination messages |
-| `/a2a/` | Structured task assignment between specialists |
-| GossipSub | Live broadcast of capsule update events |
-| `/mcp/` | Tool exposure path for sandbox/test helpers such as run-tests, git-diff, search-codebase |
+| AXL surface          | Usage                                                                                    |
+| :------------------- | :--------------------------------------------------------------------------------------- |
+| **4 separate nodes** | Triager, Reproducer, Patcher, Reviewer each run as their own role/process                |
+| `/send` / `/recv`    | Capsule handoff signals and coordination messages                                        |
+| `/a2a/`              | Structured task assignment between specialists                                           |
+| GossipSub            | Live broadcast of capsule update events                                                  |
+| `/mcp/`              | Tool exposure path for sandbox/test helpers such as run-tests, git-diff, search-codebase |
 
 Why AXL is not decorative here:
 
@@ -380,12 +458,12 @@ ENS is used as a **live state primitive**, not an identity card.
 
 Every task can publish a subname such as `task-<short-id>.maintainerswarm.eth`. Its text records mirror the current capsule state:
 
-| Record | Meaning |
-|:-------|:--------|
-| `capsule.head` | Latest capsule ID |
-| `capsule.holder` | Current task holder |
+| Record             | Meaning                 |
+| :----------------- | :---------------------- |
+| `capsule.head`     | Latest capsule ID       |
+| `capsule.holder`   | Current task holder     |
 | `capsule.log_root` | Latest storage/log root |
-| `capsule.status` | Active, held, or done |
+| `capsule.status`   | Active, held, or done   |
 
 That makes the kill-and-resume moment observable with normal resolver tooling:
 
@@ -405,12 +483,12 @@ The ENS package also includes delegation-subname helpers: a current holder can i
 
 Adapters are what make State Capsule a framework primitive instead of a bespoke demo runtime. Each adapter exposes a small integration point that checkpoints the framework's existing execution loop into signed capsules.
 
-| Adapter | Package | Integration point | What gets checkpointed |
-|:--------|:--------|:------------------|:-----------------------|
-| **OpenClaw** | `@state-capsule/adapter-openclaw` | `createStateCapsuleMemory()` memory backend | Markdown memory sections become capsule facts, decisions, pending actions, and next action |
-| **LangChain.js** | `@state-capsule/adapter-langchain` | `StateCapsuleMemory` + `withCapsuleMemory()` Runnable wrapper | Chain inputs/outputs and restored capsule context |
-| **Vercel AI SDK** | `@state-capsule/adapter-vercel-ai` | `onStepFinish` middleware for `generateText` / `streamText` | Step text, tool calls, finish reason, continued state |
-| **LlamaIndex** | planned | Memory backend | Capsule-backed task memory |
+| Adapter           | Package                            | Integration point                                             | What gets checkpointed                                                                     |
+| :---------------- | :--------------------------------- | :------------------------------------------------------------ | :----------------------------------------------------------------------------------------- |
+| **OpenClaw**      | `@ghostxd/state-capsule-adapter-openclaw`  | `createStateCapsuleMemory()` memory backend                   | Markdown memory sections become capsule facts, decisions, pending actions, and next action |
+| **LangChain.js**  | `@ghostxd/state-capsule-adapter-langchain` | `StateCapsuleMemory` + `withCapsuleMemory()` Runnable wrapper | Chain inputs/outputs and restored capsule context                                          |
+| **Vercel AI SDK** | `@ghostxd/state-capsule-adapter-vercel-ai` | `onStepFinish` middleware for `generateText` / `streamText`   | Step text, tool calls, finish reason, continued state                                      |
+| **LlamaIndex**    | planned                            | Memory backend                                                | Capsule-backed task memory                                                                 |
 
 ### OpenClaw Adapter
 
@@ -418,12 +496,12 @@ OpenClaw memory flush:
 
 ```ts
 const memory = createStateCapsuleMemory(sdk, {
-  taskId: "session-abc",
-  holder: "assistant",
+  taskId: 'session-abc',
+  holder: 'assistant',
 });
 
 const context = await memory.read();
-await memory.write(context + "\n## Facts\n- user prefers TypeScript");
+await memory.write(context + '\n## Facts\n- user prefers TypeScript');
 ```
 
 ### LangChain.js Adapter
@@ -432,8 +510,8 @@ LangChain Runnable wrapper:
 
 ```ts
 const memory = new StateCapsuleMemory(sdk, {
-  taskId: "fix-bug-42",
-  holder: "agent",
+  taskId: 'fix-bug-42',
+  holder: 'agent',
 });
 
 const wrapped = withCapsuleMemory(chain, memory);
@@ -446,18 +524,30 @@ Vercel AI SDK step checkpoint:
 
 ```ts
 const middleware = createCapsuleMiddleware(sdk, {
-  taskId: "patch-pr-99",
-  holder: "agent",
+  taskId: 'patch-pr-99',
+  holder: 'agent',
 });
 
 await generateText({
   model,
-  prompt: "Fix the failing tests.",
+  prompt: 'Fix the failing tests.',
   onStepFinish: middleware.onStepFinish,
 });
 ```
 
 The adapter goal is intentionally boring: add continuity to existing agent code with one memory object or one callback, then let the SDK handle signing, storage, restoration, and verification.
+
+## Integration Guide
+
+See [INTEGRATION.md](./INTEGRATION.md) for practical integration recipes, including:
+
+- installing the public SDK package,
+- using in-memory storage for local development,
+- switching to 0G Storage and 0G Chain,
+- adding LangChain-style checkpointing,
+- adapting OpenClaw memory,
+- wiring Vercel AI SDK step callbacks,
+- and attaching ENS task-pointer hooks.
 
 ---
 
@@ -488,24 +578,24 @@ state-capsule/
 
 Important variables from `.env.example`:
 
-| Variable | Required | Purpose |
-|:---------|:---------|:--------|
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | one required for live mode | Agent intelligence |
-| `STATE_CAPSULE_MODE` | optional | `live`, `record`, or `replay` |
-| `OG_PRIVATE_KEY` | optional | Enables real 0G Storage and chain writes |
-| `OG_EVM_RPC` | optional | 0G Chain RPC |
-| `OG_INDEXER_RPC` | optional | 0G Storage indexer |
-| `OG_COMPUTE_SERVICE_URL` | optional | 0G Compute provider endpoint |
-| `NAMESTONE_API_KEY` | optional | ENS task pointer publishing |
-| `ENS_PARENT_NAME` | optional | Parent name for task subnames |
-| `AXL_BINARY_PATH` | optional | Local AXL node binary |
+| Variable                                                | Required                   | Purpose                                  |
+| :------------------------------------------------------ | :------------------------- | :--------------------------------------- |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GROQ_API_KEY` | one required for live mode | Agent intelligence                       |
+| `STATE_CAPSULE_MODE`                                    | optional                   | `live`, `record`, or `replay`            |
+| `OG_PRIVATE_KEY`                                        | optional                   | Enables real 0G Storage and chain writes |
+| `OG_EVM_RPC`                                            | optional                   | 0G Chain RPC                             |
+| `OG_INDEXER_RPC`                                        | optional                   | 0G Storage indexer                       |
+| `OG_COMPUTE_SERVICE_URL`                                | optional                   | 0G Compute provider endpoint             |
+| `NAMESTONE_API_KEY`                                     | optional                   | ENS task pointer publishing              |
+| `ENS_PARENT_NAME`                                       | optional                   | Parent name for task subnames            |
+| `AXL_BINARY_PATH`                                       | optional                   | Local AXL node binary                    |
 
 ---
 
 ## Development Commands
 
 ```bash
-pnpm --filter @state-capsule/sdk test
+pnpm --filter @ghostxd/state-capsule-sdk test
 pnpm --filter @state-capsule/maintainer-swarm typecheck
 pnpm --filter @state-capsule/demo-ui build
 pnpm demo:smoke

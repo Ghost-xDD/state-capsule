@@ -1,14 +1,14 @@
 /**
- * State Capsule × LangChain adapter.
+ * State Capsule LangChain adapter.
  *
  * Two integration points:
- *   1. StateCapsuleMemory  — BaseMemory subclass. Plug directly into any
+ *   1. StateCapsuleMemory  - BaseMemory subclass. Plug directly into any
  *                            LangChain chain or agent as the `memory:` option.
- *   2. withCapsuleMemory   — higher-order function that wraps any Runnable
+ *   2. withCapsuleMemory   - higher-order function that wraps any Runnable
  *                            and calls saveContext after every invocation.
  *
  * Usage:
- *   import { StateCapsuleMemory } from "@state-capsule/adapter-langchain";
+ *   import { StateCapsuleMemory } from "@ghostxd/state-capsule-adapter-langchain";
  *   const memory = new StateCapsuleMemory(sdk, { taskId: "fix-bug", holder: "agent" });
  *   const chain  = prompt.pipe(llm).pipe(parser);
  *   const result = await chain.invoke({ input: "plan?" }, { memory });
@@ -16,11 +16,11 @@
 
 import { BaseMemory }       from "@langchain/core/memory";
 import type { InputValues, MemoryVariables, OutputValues } from "@langchain/core/memory";
-import type { StateCapsule, Capsule } from "@state-capsule/sdk";
+import type { StateCapsule, Capsule } from "@ghostxd/state-capsule-sdk";
 
 export type { StateCapsule, Capsule };
 
-// ── Options ───────────────────────────────────────────────────────────────────
+// Options
 
 export interface StateCapsuleMemoryOptions {
   /** Unique task ID. */
@@ -33,14 +33,14 @@ export interface StateCapsuleMemoryOptions {
   memoryKey?: string;
 }
 
-// ── StateCapsuleMemory ────────────────────────────────────────────────────────
+// StateCapsuleMemory
 
 /**
  * LangChain `BaseMemory` subclass backed by State Capsule.
  *
- * `loadMemoryVariables` → restores the latest capsule, returns structured
+ * `loadMemoryVariables` restores the latest capsule and returns structured
  *   context string under `memoryKey`.
- * `saveContext`         → checkpoints input + output as a new capsule update.
+ * `saveContext` checkpoints input + output as a new capsule update.
  */
 export class StateCapsuleMemory extends BaseMemory {
   readonly sdk: StateCapsule;
@@ -102,12 +102,12 @@ export class StateCapsuleMemory extends BaseMemory {
     this._capsuleId = capsule.capsule_id;
   }
 
-  override async clear(): Promise<void> {
+  async clear(): Promise<void> {
     this._capsuleId = null;
   }
 }
 
-// ── Runnable wrapper ──────────────────────────────────────────────────────────
+// Runnable wrapper
 
 export interface SimpleRunnable<I, O> {
   invoke(input: I): Promise<O>;
@@ -144,7 +144,7 @@ export function withCapsuleMemory<I, O>(
   };
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Helpers
 
 function _capsuleToContext(c: {
   goal:            string;
@@ -154,9 +154,17 @@ function _capsuleToContext(c: {
   next_action:     string;
 }): string {
   const parts: string[] = [`Goal: ${c.goal}`];
-  if (c.facts.length)           parts.push(`Facts:\n${c.facts.map(f => `- ${f}`).join("\n")}`);
-  if (c.decisions.length)       parts.push(`Decisions:\n${c.decisions.map(d => `- ${d}`).join("\n")}`);
-  if (c.pending_actions.length) parts.push(`Pending:\n${c.pending_actions.map(a => `- ${a}`).join("\n")}`);
-  if (c.next_action)            parts.push(`Next: ${c.next_action}`);
+  if (c.facts.length) {
+    parts.push(`Facts:\n${c.facts.map((fact) => `- ${fact}`).join("\n")}`);
+  }
+  if (c.decisions.length) {
+    parts.push(`Decisions:\n${c.decisions.map((decision) => `- ${decision}`).join("\n")}`);
+  }
+  if (c.pending_actions.length) {
+    parts.push(`Pending:\n${c.pending_actions.map((action) => `- ${action}`).join("\n")}`);
+  }
+  if (c.next_action) {
+    parts.push(`Next: ${c.next_action}`);
+  }
   return parts.join("\n\n");
 }

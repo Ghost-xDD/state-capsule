@@ -4,7 +4,7 @@
  * and decode it back to a Capsule object.
  *
  * Usage:
- *   ROOT_HASH=0xabc... pnpm --filter @state-capsule/sdk exec tsx scripts/retrieve-blob.ts
+ *   ROOT_HASH=0xabc... pnpm --filter @ghostxd/state-capsule-sdk exec tsx scripts/retrieve-blob.ts
  */
 import { Indexer } from "@0gfoundation/0g-ts-sdk";
 import { mkdtemp, readFile, rm } from "node:fs/promises";

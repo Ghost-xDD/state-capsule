@@ -23,7 +23,7 @@ COPY examples/buggy-utils/ ./examples/buggy-utils/
 RUN pnpm install --frozen-lockfile
 
 # Build SDK and swarm
-RUN pnpm --filter @state-capsule/sdk build
+RUN pnpm --filter @ghostxd/state-capsule-sdk build
 RUN pnpm --filter @state-capsule/maintainer-swarm build
 # Keep buggy-utils source in place (agents read the .ts file directly).
 # No dist build needed; the source is the artefact.

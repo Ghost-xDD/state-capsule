@@ -12,7 +12,7 @@ import { triagerHandler }   from "./handlers/triager.js";
 import { reproducerHandler } from "./handlers/reproducer.js";
 import { patcherHandler }   from "./handlers/patcher.js";
 import { reviewerHandler }  from "./handlers/reviewer.js";
-import { axlUrlFromEnv } from "@state-capsule/sdk";
+import { axlUrlFromEnv } from "@ghostxd/state-capsule-sdk";
 
 const HANDLERS: Record<AgentRole, Handler> = {
   triager:    triagerHandler,
