@@ -4,22 +4,25 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2 } from "lucide-react";
 
+const HOSTED_REPLAY_REPO = "https://github.com/sindresorhus/execa";
+
 const EXAMPLE_REPOS = [
+  HOSTED_REPLAY_REPO,
   "https://github.com/nicolo-ribaudo/tc39-proposal-await-dictionary",
-  "https://github.com/sindresorhus/execa",
 ];
 
 export function DemoLauncher({ compact = false }: { compact?: boolean }) {
   const hostedReplay = process.env["NEXT_PUBLIC_DEMO_UI_MODE"] === "replay";
   const router = useRouter();
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(hostedReplay ? HOSTED_REPLAY_REPO : "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return;
+    const repoUrl = hostedReplay ? HOSTED_REPLAY_REPO : url.trim();
+    if (!repoUrl) return;
     setLoading(true);
     setError(null);
 
@@ -27,7 +30,7 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
       const res = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoUrl: url.trim() }),
+        body: JSON.stringify({ repoUrl }),
       });
 
       const data = (await res.json()) as {
@@ -67,15 +70,17 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
           ref={inputRef}
           type="url"
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder={hostedReplay ? "https://github.com/sindresorhus/execa" : "https://github.com/you/your-ts-lib"}
-          disabled={loading}
+          onChange={(e) => {
+            if (!hostedReplay) setUrl(e.target.value);
+          }}
+          placeholder={hostedReplay ? HOSTED_REPLAY_REPO : "https://github.com/you/your-ts-lib"}
+          disabled={loading || hostedReplay}
           className="min-h-11 flex-1 border border-white/[0.09] bg-black/30 px-3.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/10 disabled:opacity-50"
           required
         />
         <button
           type="submit"
-          disabled={loading || !url.trim()}
+          disabled={loading || (!hostedReplay && !url.trim())}
           className="inline-flex min-h-11 items-center justify-center gap-2 bg-zinc-100 px-4 text-sm font-semibold text-zinc-950 transition hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-500"
         >
           {loading ? (
@@ -100,7 +105,7 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="text-xs text-zinc-600">{hostedReplay ? "Captured from" : "Try"}</span>
-        {EXAMPLE_REPOS.map((repo) => (
+        {(hostedReplay ? [HOSTED_REPLAY_REPO] : EXAMPLE_REPOS).map((repo) => (
           <button
             key={repo}
             type="button"
