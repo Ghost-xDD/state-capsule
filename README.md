@@ -211,7 +211,7 @@ await sdk.verifyHandoff([genesis, next]);
 | `next_action` | The immediate next step |
 | `holder` | Current agent or role responsible for the task |
 | `log_root` | 0G Storage root for the capsule write |
-| `task_pointer` | Optional ENS name for human-readable resolution |
+| `task_pointer` | ENS name for human-readable resolution |
 
 ---
 
