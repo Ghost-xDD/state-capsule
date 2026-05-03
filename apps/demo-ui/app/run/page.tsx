@@ -1,253 +1,78 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Suspense } from "react";
-import type { CapsuleInfo } from "@/lib/run-store";
+import { ArrowLeft, Hexagon, ExternalLink, CheckCircle2, AlertTriangle } from "lucide-react";
+import type { AgentRole, AgentState, ActivityEvent, CapsuleInfo } from "@/lib/run-store";
+import { AgentMesh } from "@/components/AgentMesh";
+import { ActivityFeed } from "@/components/ActivityFeed";
+import { ZeroGPanel } from "@/components/ZeroGPanel";
+import { PatchPanel } from "@/components/PatchPanel";
+import { RawLogDrawer } from "@/components/RawLogDrawer";
 
-// ── ANSI stripping ────────────────────────────────────────────────────────────
-const ANSI_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
-const stripAnsi = (s: string) => s.replace(ANSI_RE, "");
+type SseEvent =
+  | { type: "line";    text: string }
+  | { type: "agents";  agents: Record<AgentRole, AgentState>; capsule: CapsuleInfo }
+  | { type: "activity"; event: ActivityEvent }
+  | { type: "done";    capsule: CapsuleInfo; agents: Record<AgentRole, AgentState>; error: string | null; elapsed: number }
+  | { type: "error";   msg: string };
 
-// ── Line classifier (for coloring) ───────────────────────────────────────────
-function lineClass(raw: string): string {
-  const s = stripAnsi(raw);
-  if (/✓|APPROVED|pipeline-complete/i.test(s)) return "text-green-400";
-  if (/⚠|warn/i.test(s)) return "text-yellow-400";
-  if (/💀|kill|KILL/i.test(s)) return "text-red-400";
-  if (/🔄|resum/i.test(s)) return "text-purple-400";
-  if (/▶ Phase/i.test(s)) return "text-indigo-300 font-bold";
-  if (/═{10}/.test(s)) return "text-cyan-500";
-  if (/^\s*→/.test(s)) return "text-gray-400";
-  if (/^\[demo-ui\]/.test(s)) return "text-sky-400";
-  if (/error|Error/i.test(s)) return "text-red-300";
-  return "text-gray-300";
+function makeIdleAgents(): Record<AgentRole, AgentState> {
+  const idle = (role: AgentRole): AgentState => ({
+    role, status: "idle", activity: null, summary: null, count: null, killed: false, pulse: 0,
+  });
+  return {
+    triager:    idle("triager"),
+    reproducer: idle("reproducer"),
+    patcher:    idle("patcher"),
+    reviewer:   idle("reviewer"),
+  };
 }
 
-// ── Truncate long hex strings for display ────────────────────────────────────
-const short = (s: string) =>
-  s.length > 20 ? `${s.slice(0, 10)}…${s.slice(-6)}` : s;
-
-// ── CapsuleInfo sidebar ───────────────────────────────────────────────────────
-function Sidebar({
-  capsule,
-  done,
-  elapsed,
-  repoUrl,
-  error,
-}: {
-  capsule: CapsuleInfo | null;
-  done: boolean;
-  elapsed: number | null;
-  repoUrl: string | null;
-  error: string | null;
-}) {
-  const statusColor = done
-    ? error
-      ? "bg-red-500"
-      : "bg-green-500"
-    : "bg-yellow-400 animate-pulse";
-  const statusLabel = done ? (error ? "failed" : "complete") : "running";
-
-  return (
-    <aside className="flex flex-col gap-4 h-full overflow-y-auto pr-1">
-      {/* Status */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-        <div className="flex items-center gap-2 mb-1">
-          <span className={`inline-block w-2 h-2 rounded-full ${statusColor}`} />
-          <span className="text-xs uppercase tracking-widest text-gray-400">
-            {statusLabel}
-          </span>
-          {elapsed && (
-            <span className="ml-auto text-xs text-gray-600">
-              {(elapsed / 1000).toFixed(1)}s
-            </span>
-          )}
-        </div>
-        {repoUrl && (
-          <a
-            href={repoUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-indigo-400 hover:underline break-all"
-          >
-            {repoUrl.replace("https://github.com/", "")}
-          </a>
-        )}
-      </div>
-
-      {/* Verdict */}
-      {capsule?.verdict && (
-        <div
-          className={`rounded-xl border px-4 py-3 text-sm font-bold text-center ${
-            capsule.verdict === "pipeline-complete"
-              ? "border-green-700 bg-green-950 text-green-400"
-              : "border-yellow-700 bg-yellow-950 text-yellow-400"
-          }`}
-        >
-          {capsule.verdict === "pipeline-complete" ? "✓ PATCH APPROVED" : capsule.verdict}
-        </div>
-      )}
-
-      {/* ENS pointer */}
-      {capsule?.ensSub && (
-        <InfoBlock label="ENS Pointer" icon="🌐">
-          <a
-            href={`https://app.ens.domains/${capsule.ensSub}`}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-indigo-400 hover:underline break-all"
-          >
-            {capsule.ensSub}
-          </a>
-        </InfoBlock>
-      )}
-
-      {/* Capsule chain */}
-      {capsule && capsule.capsuleIds.length > 0 && (
-        <InfoBlock label="Capsule Chain" icon="⬡">
-          <ol className="space-y-1">
-            {capsule.capsuleIds.map((id, i) => (
-              <li key={id} className="flex items-center gap-2 text-xs">
-                <span className="text-gray-600 w-4 text-right shrink-0">{i + 1}</span>
-                <code className="text-cyan-400 break-all">{short(id)}</code>
-              </li>
-            ))}
-          </ol>
-        </InfoBlock>
-      )}
-
-      {/* 0G log roots */}
-      {capsule && capsule.logRoots.length > 0 && (
-        <InfoBlock label="0G Blob Roots" icon="🗄">
-          <ul className="space-y-1">
-            {capsule.logRoots.map((lr) => (
-              <li key={lr}>
-                <code className="text-purple-400 text-xs break-all">{short(lr)}</code>
-              </li>
-            ))}
-          </ul>
-        </InfoBlock>
-      )}
-
-      {/* On-chain tx hashes */}
-      {capsule && capsule.txHashes.length > 0 && (
-        <InfoBlock label="On-chain Txs" icon="⛓">
-          <ul className="space-y-1">
-            {capsule.txHashes.map((tx) => (
-              <li key={tx}>
-                <a
-                  href={`https://chainscan-galileo.0g.ai/tx/${tx}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-green-400 hover:underline break-all"
-                >
-                  {short(tx)}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </InfoBlock>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="rounded-xl border border-red-800 bg-red-950 px-4 py-3 text-xs text-red-400 break-all">
-          {error}
-        </div>
-      )}
-    </aside>
-  );
+function makeEmptyCapsule(taskId: string): CapsuleInfo {
+  return {
+    taskId,
+    capsuleIds:      [],
+    logRoots:        [],
+    ensSub:          null,
+    txHashes:        [],
+    verdict:         null,
+    patch:           null,
+    computeSummary:  null,
+    computeModel:    null,
+  };
 }
 
-function InfoBlock({
-  label,
-  icon,
-  children,
-}: {
-  label: string;
-  icon: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <div className="text-xs uppercase tracking-widest text-gray-500 mb-3 flex items-center gap-2">
-        <span>{icon}</span>
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ── Diff viewer ───────────────────────────────────────────────────────────────
-function PatchPanel({ patch }: { patch: string }) {
-  const lines = patch.split("\n");
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-      <div className="px-4 py-2 border-b border-gray-800 text-xs text-gray-500 uppercase tracking-widest">
-        Generated Patch
-      </div>
-      <pre className="overflow-x-auto p-4 text-xs leading-relaxed max-h-72 overflow-y-auto">
-        {lines.map((line, i) => (
-          <span
-            key={i}
-            className={
-              line.startsWith("+")
-                ? "text-green-400"
-                : line.startsWith("-")
-                ? "text-red-400"
-                : "text-gray-400"
-            }
-          >
-            {line}
-            {"\n"}
-          </span>
-        ))}
-      </pre>
-    </div>
-  );
-}
-
-// ── SSE event types ───────────────────────────────────────────────────────────
-interface LineEvent {
-  type: "line";
-  text: string;
-}
-interface DoneEvent {
-  type: "done";
-  capsule: CapsuleInfo;
-  error: string | null;
-  elapsed: number;
-}
-interface ErrorEvent {
-  type: "error";
-  msg: string;
-}
-type SseEvent = LineEvent | DoneEvent | ErrorEvent;
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 function RunPageInner() {
-  const params = useSearchParams();
-  const router = useRouter();
-  const taskId = params.get("id");
+  const params  = useSearchParams();
+  const router  = useRouter();
+  const taskId  = params.get("id");
 
-  const [lines, setLines] = useState<string[]>([]);
-  const [capsule, setCapsule] = useState<CapsuleInfo | null>(null);
-  const [done, setDone] = useState(false);
-  const [elapsed, setElapsed] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [repoUrl, setRepoUrl] = useState<string | null>(null);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [lines,     setLines]     = useState<string[]>([]);
+  const [agents,    setAgents]    = useState<Record<AgentRole, AgentState>>(() => makeIdleAgents());
+  const [capsule,   setCapsule]   = useState<CapsuleInfo>(() => makeEmptyCapsule(taskId ?? "?"));
+  const [activity,  setActivity]  = useState<ActivityEvent[]>([]);
+  const [done,      setDone]      = useState(false);
+  const [elapsed,   setElapsed]   = useState<number | null>(null);
+  const [error,     setError]     = useState<string | null>(null);
+  const [repoUrl,   setRepoUrl]   = useState<string | null>(null);
+  const [startedAt] = useState<number>(() => Date.now());
+  const [rawOpen,   setRawOpen]   = useState(false);
+  const [killFlash, setKillFlash] = useState(0);
 
-  const logRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const prevKilled = useRef(false);
+  useEffect(() => {
+    const nowKilled = agents.reproducer.killed;
+    if (nowKilled && !prevKilled.current) {
+      setKillFlash((k) => k + 1);
+    }
+    prevKilled.current = nowKilled;
+  }, [agents.reproducer.killed]);
 
-  // Extract repo URL from the first [demo-ui] line
-  const processLine = useCallback((line: string) => {
-    const m = line.match(/\[demo-ui\] Cloned (https:\/\/github\.com\/[^\s]+)/);
-    if (m) setRepoUrl(m[1]!);
-    setLines((prev) => [...prev, line]);
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
@@ -258,18 +83,37 @@ function RunPageInner() {
     es.onmessage = (ev) => {
       const event = JSON.parse(ev.data as string) as SseEvent;
 
-      if (event.type === "line") {
-        processLine(event.text);
-      } else if (event.type === "done") {
-        setCapsule(event.capsule);
-        setDone(true);
-        setElapsed(event.elapsed);
-        if (event.error) setError(event.error);
-        es.close();
-      } else if (event.type === "error") {
-        setError(event.msg);
-        setDone(true);
-        es.close();
+      switch (event.type) {
+        case "line": {
+          const m = event.text.match(/\[demo-ui\] Cloned (https:\/\/github\.com\/[^\s]+)/);
+          if (m) setRepoUrl(m[1]!);
+          setLines((prev) => [...prev, event.text]);
+          break;
+        }
+        case "agents": {
+          setAgents(event.agents);
+          setCapsule(event.capsule);
+          break;
+        }
+        case "activity": {
+          setActivity((prev) => [...prev, event.event]);
+          break;
+        }
+        case "done": {
+          setAgents(event.agents);
+          setCapsule(event.capsule);
+          setDone(true);
+          setElapsed(event.elapsed);
+          if (event.error) setError(event.error);
+          es.close();
+          break;
+        }
+        case "error": {
+          setError(event.msg);
+          setDone(true);
+          es.close();
+          break;
+        }
       }
     };
 
@@ -279,99 +123,148 @@ function RunPageInner() {
     };
 
     return () => es.close();
-  }, [taskId, processLine, done]);
-
-  // Auto-scroll log to bottom
-  useEffect(() => {
-    if (autoScroll) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [lines, autoScroll]);
-
-  const handleScroll = () => {
-    const el = logRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-    setAutoScroll(atBottom);
-  };
+  }, [taskId, done]);
 
   if (!taskId) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-gray-500">
-        No task ID in URL.{" "}
-        <button onClick={() => router.push("/")} className="ml-2 text-indigo-400 underline">
+      <div className="flex items-center justify-center min-h-screen text-zinc-400">
+        No task ID in URL.
+        <button
+          onClick={() => router.push("/")}
+          className="ml-2 text-indigo-400 hover:text-indigo-300 underline"
+        >
           Go home
         </button>
       </div>
     );
   }
 
+  const statusDot = done
+    ? error
+      ? "bg-red-500"
+      : "bg-emerald-500"
+    : "bg-amber-400 pulse-dot";
+  const statusLabel = done ? (error ? "Failed" : "Complete") : "Running";
+
   return (
-    <div className="flex flex-col h-screen">
-      {/* Top bar */}
-      <header className="flex items-center gap-4 px-6 py-3 border-b border-gray-800 bg-gray-950 shrink-0">
-        <button
-          onClick={() => router.push("/")}
-          className="text-gray-500 hover:text-gray-300 text-sm transition-colors"
-        >
-          ← back
-        </button>
-        <span className="text-xs text-gray-600 font-mono">
-          task:{" "}
-          <span className="text-gray-400">{taskId.slice(0, 8)}…</span>
-        </span>
-        <div className="flex-1" />
-        <span className="text-xs text-gray-600">
-          {lines.length} lines
-          {!autoScroll && (
-            <button
-              onClick={() => {
-                setAutoScroll(true);
-                bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-              }}
-              className="ml-3 text-indigo-400 hover:underline"
+    <div className="min-h-screen bg-canvas text-zinc-100 flex flex-col">
+      {/* ── Top bar ───────────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-canvas/80 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-4">
+          <button
+            onClick={() => router.push("/")}
+            className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 transition-colors"
+          >
+            <ArrowLeft size={14} strokeWidth={2.25} />
+            Back
+          </button>
+
+          <div className="h-5 w-px bg-white/[0.08]" />
+
+          <div className="flex items-center gap-2 min-w-0">
+            <Hexagon size={16} className="text-indigo-400 shrink-0" strokeWidth={2} />
+            <span className="text-sm font-medium text-zinc-100">State Capsule</span>
+          </div>
+
+          <div className="h-5 w-px bg-white/[0.08]" />
+
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`w-1.5 h-1.5 rounded-full ${statusDot}`} />
+            <span className="text-xs font-medium text-zinc-300">{statusLabel}</span>
+          </div>
+
+          {repoUrl && (
+            <a
+              href={repoUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-zinc-400 hover:text-zinc-200 inline-flex items-center gap-1 truncate max-w-[28rem]"
             >
-              ↓ scroll to bottom
-            </button>
+              <span className="truncate font-mono">
+                {repoUrl.replace("https://github.com/", "")}
+              </span>
+              <ExternalLink size={11} strokeWidth={2} className="shrink-0" />
+            </a>
           )}
-        </span>
+
+          <div className="ml-auto flex items-center gap-5 text-xs text-zinc-500 font-mono tabular-nums">
+            <span>
+              <span className="text-zinc-600">task </span>
+              {taskId.slice(0, 8)}
+            </span>
+            <span suppressHydrationWarning>
+              {elapsed !== null
+                ? `${(elapsed / 1000).toFixed(1)}s`
+                : `${((Date.now() - startedAt) / 1000).toFixed(0)}s`}
+            </span>
+            <span>
+              {lines.length}
+              <span className="text-zinc-600"> lines</span>
+            </span>
+          </div>
+        </div>
       </header>
 
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Log panel */}
-        <div
-          ref={logRef}
-          onScroll={handleScroll}
-          className="flex-1 overflow-y-auto bg-gray-950 p-4 font-mono text-xs leading-relaxed"
-        >
-          {lines.length === 0 && (
-            <p className="text-gray-600 animate-pulse">Waiting for output…</p>
-          )}
-          {lines.map((line, i) => (
-            <div key={i} className={`ansi-line ${lineClass(line)}`}>
-              {stripAnsi(line)}
-            </div>
-          ))}
-          <div ref={bottomRef} />
+      <main className="max-w-7xl w-full mx-auto px-6 pt-6 pb-6 flex-1 flex flex-col gap-6">
+        {/* ── Section header ───────────────────────────────────────────────── */}
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h1 className="text-lg font-semibold text-zinc-100 leading-tight">
+              Maintainer swarm
+            </h1>
+            <p className="text-sm text-zinc-500 mt-0.5">
+              Four agents · capsules flow left to right · every state anchored to 0G
+            </p>
+          </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-950 overflow-y-auto p-4">
-          <Sidebar
-            capsule={capsule}
-            done={done}
-            elapsed={elapsed}
-            repoUrl={repoUrl}
-            error={error}
-          />
-          {capsule?.patch && (
-            <div className="mt-4">
-              <PatchPanel patch={capsule.patch} />
-            </div>
-          )}
+        {/* ── Agent mesh ───────────────────────────────────────────────────── */}
+        <AgentMesh agents={agents} killFlashKey={killFlash} />
+
+        {/* Verdict / error banner */}
+        {capsule.verdict && (
+          <div
+            className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${
+              capsule.verdict === "pipeline-complete"
+                ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
+                : "border-amber-500/30 bg-amber-500/5 text-amber-200"
+            }`}
+          >
+            {capsule.verdict === "pipeline-complete" ? (
+              <CheckCircle2 size={16} strokeWidth={2} className="shrink-0" />
+            ) : (
+              <AlertTriangle size={16} strokeWidth={2} className="shrink-0" />
+            )}
+            <span className="text-sm font-medium">
+              {capsule.verdict === "pipeline-complete"
+                ? "Patch approved · Pipeline complete"
+                : capsule.verdict}
+            </span>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+            <AlertTriangle size={16} strokeWidth={2} className="shrink-0 mt-0.5" />
+            <span className="break-all">{error}</span>
+          </div>
+        )}
+
+        {/* ── Bottom split ─────────────────────────────────────────────────── */}
+        <div className="grid gap-4 grid-cols-1 lg:grid-cols-[1.4fr_1fr] flex-1 min-h-0">
+          <div className="min-h-[20rem] flex flex-col">
+            <ActivityFeed events={activity} startedAt={startedAt} />
+          </div>
+
+          <div className="min-h-[20rem] flex flex-col gap-4">
+            <ZeroGPanel capsule={capsule} />
+            {capsule.patch && <PatchPanel patch={capsule.patch} />}
+          </div>
         </div>
-      </div>
+
+        {/* ── Raw log ──────────────────────────────────────────────────────── */}
+        <RawLogDrawer lines={lines} open={rawOpen} onToggle={() => setRawOpen((o) => !o)} />
+      </main>
     </div>
   );
 }
@@ -380,7 +273,7 @@ export default function RunPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex items-center justify-center min-h-screen text-gray-600 text-sm">
+        <div className="flex items-center justify-center min-h-screen text-zinc-500 text-sm">
           Loading…
         </div>
       }

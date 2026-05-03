@@ -8,6 +8,7 @@
     "start": "next start --port 3333"
   },
   "dependencies": {
+    "lucide-react": "^1.14.0",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
