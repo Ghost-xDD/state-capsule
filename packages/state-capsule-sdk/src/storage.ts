@@ -6,9 +6,7 @@
  *
  * ZeroGStorage:
  *   - blobWrite / blobRead → 0G Storage Indexer (MemData upload, content-addressed)
- *   - kvSet / kvGet        → 0G Storage KV via Batcher (DL-001 fix applied)
- *
- * DL-001 fix: pass getFlowContract(addr, signer) to Batcher, NOT the raw address.
+ *   - kvSet / kvGet        → 0G Storage KV via Batcher
  */
 
 import {
@@ -145,14 +143,12 @@ export class ZeroGStorage implements StorageAdapter {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           this.signer as any,
           // Upload options:
-          //   nonce            — bypass ethers' internal nonce tracking and
-          //                      use the coordinator's value
-          //   finalityRequired — false: return as soon as the EVM tx hits the
-          //                      mempool, don't block on storage-node sync
-          //                      (which can take many minutes on testnet).
-          //                      The blob is committed to chain immediately;
-          //                      the storage node will eventually replicate.
-          //   skipTx           — false: still submit the chain tx
+          //   nonce            — use the shared coordinator so Storage and
+          //                      Chain writes stay ordered for one wallet.
+          //   finalityRequired — false: return after transaction submission
+          //                      while storage-node replication continues
+          //                      asynchronously on the testnet.
+          //   skipTx           — false: submit the underlying chain tx.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           { nonce, finalityRequired: false } as any,
         );
@@ -183,9 +179,8 @@ export class ZeroGStorage implements StorageAdapter {
   // ── KV (mutable head) ───────────────────────────────────────────────────
 
   async kvSet(key: string, value: Uint8Array): Promise<string> {
-    // KV writes go through the coordinator's serial queue. The Batcher
-    // doesn't accept an explicit nonce, but serialization + the coordinator's
-    // retry-with-error-parsing converges quickly even on an unreliable RPC.
+    // KV writes go through the coordinator's serial queue so Storage and Chain
+    // operations remain ordered for the same wallet.
     try {
       return await this.nonceCoord.withNonce(
         () => this.fetchPendingNonce(),
@@ -208,7 +203,7 @@ export class ZeroGStorage implements StorageAdapter {
       );
     } catch (err) {
       if (!this._kvWarnedSet) {
-        console.warn(`[0G KV] kvSet unavailable (non-fatal): ${(err as Error).message.split("\n")[0]}`);
+        console.warn(`[0G KV] kvSet deferred (non-fatal): ${(err as Error).message.split("\n")[0]}`);
         this._kvWarnedSet = true;
       }
       return "0x" + "00".repeat(32);
@@ -237,7 +232,7 @@ export class ZeroGStorage implements StorageAdapter {
       return Uint8Array.from(Buffer.from(b64, "base64"));
     } catch (err) {
       if (!this._kvWarnedGet) {
-        console.warn(`[0G KV] kvGet unavailable (non-fatal): ${(err as Error).message.split("\n")[0]}`);
+        console.warn(`[0G KV] kvGet deferred (non-fatal): ${(err as Error).message.split("\n")[0]}`);
         this._kvWarnedGet = true;
       }
       return null;

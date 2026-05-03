@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from 'next/link';
 import {
   ArrowRight,
   Boxes,
@@ -10,48 +10,68 @@ import {
   RadioTower,
   RefreshCcw,
   ShieldCheck,
-} from "lucide-react";
+} from 'lucide-react';
 
 const proofRows = [
-  ["task_id", "support-ticket-482", "stable"],
-  ["capsule.head", "0x8cf2...19ab", "0G KV"],
-  ["current_holder", "agent-b", "portable"],
-  ["next_action", "continue from checkpoint", "signed"],
+  ['task_id', 'support-ticket-482', 'stable'],
+  ['capsule.head', '0x8cf2...19ab', '0G KV'],
+  ['current_holder', 'agent-b', 'portable'],
+  ['next_action', 'continue from checkpoint', 'signed'],
 ];
 
 const flow = [
-  { label: "Agent A", detail: "publishes signed capsule", tone: "text-cyan-300" },
-  { label: "Runtime", detail: "process crashes or hands off", tone: "text-red-300" },
-  { label: "Agent B", detail: "restores verified state", tone: "text-emerald-300" },
-  { label: "Adapter", detail: "resumes framework loop", tone: "text-amber-300" },
-  { label: "Observer", detail: "verifies capsule chain", tone: "text-violet-300" },
+  {
+    label: 'Agent A',
+    detail: 'publishes signed capsule',
+    tone: 'text-cyan-300',
+  },
+  {
+    label: 'Runtime',
+    detail: 'process crashes or hands off',
+    tone: 'text-red-300',
+  },
+  {
+    label: 'Agent B',
+    detail: 'restores verified state',
+    tone: 'text-emerald-300',
+  },
+  {
+    label: 'Adapter',
+    detail: 'resumes framework loop',
+    tone: 'text-amber-300',
+  },
+  {
+    label: 'Observer',
+    detail: 'verifies capsule chain',
+    tone: 'text-violet-300',
+  },
 ];
 
 const capabilities = [
   {
     icon: RefreshCcw,
-    title: "Crash-resumable agents",
-    body: "Every specialist writes the facts, constraints, decisions, and next action another process needs to continue without replaying the whole investigation.",
+    title: 'Crash-resumable agents',
+    body: 'Every specialist writes the facts, constraints, decisions, and next action another process needs to continue without replaying the whole investigation.',
   },
   {
     icon: ShieldCheck,
-    title: "Verifiable handoffs",
-    body: "Capsules are signed, chained, anchored, and summarized through 0G Compute so receivers can trust what changed and why.",
+    title: 'Verifiable handoffs',
+    body: 'Capsules are signed, chained, anchored, and summarized through 0G Compute so receivers can trust what changed and why.',
   },
   {
     icon: Network,
-    title: "Real swarm topology",
-    body: "Triager, Reproducer, Patcher, and Reviewer coordinate over AXL as separate nodes with separate failure domains.",
+    title: 'Real swarm topology',
+    body: 'Triager, Reproducer, Patcher, and Reviewer coordinate over AXL as separate nodes with separate failure domains.',
   },
 ];
 
 const stack = [
-  ["0G Storage", "Mutable capsule head plus append-only log"],
-  ["0G Chain", "Registry anchors for capsule lineage"],
-  ["0G Compute", "Sealed summaries for fast restore"],
-  ["Gensyn AXL", "Live multi-node coordination"],
-  ["ENS", "Human-readable task pointers"],
-  ["Adapters", "OpenClaw, LangChain, Vercel AI SDK"],
+  ['0G Storage', 'Mutable capsule head plus append-only log'],
+  ['0G Chain', 'Registry anchors for capsule lineage'],
+  ['0G Compute', 'Sealed summaries for fast restore'],
+  ['Gensyn AXL', 'Live multi-node coordination'],
+  ['ENS', 'Human-readable task pointers'],
+  ['Adapters', 'OpenClaw, LangChain, Vercel AI SDK'],
 ];
 
 function ProductProof() {
@@ -100,7 +120,7 @@ function ProductProof() {
                       {step.label}
                     </p>
                     <p className="font-mono text-[11px] text-zinc-600">
-                      +{(index * 17 + 4).toString().padStart(2, "0")}s
+                      +{(index * 17 + 4).toString().padStart(2, '0')}s
                     </p>
                   </div>
                   <p className="mt-0.5 text-sm text-zinc-500">{step.detail}</p>
@@ -143,12 +163,17 @@ function ProductProof() {
           </div>
 
           <div className="mt-4 grid grid-cols-3 border border-white/[0.07] bg-black/20">
-            {["64 KB soft cap", "signed writes", "schema migration"].map((stat) => (
-              <div key={stat} className="border-r border-white/[0.06] p-3 last:border-r-0">
-                <p className="text-sm font-semibold text-zinc-100">{stat}</p>
-                <p className="mt-1 text-[11px] text-zinc-600">sdk contract</p>
-              </div>
-            ))}
+            {['64 KB soft cap', 'signed writes', 'schema migration'].map(
+              (stat) => (
+                <div
+                  key={stat}
+                  className="border-r border-white/[0.06] p-3 last:border-r-0"
+                >
+                  <p className="text-sm font-semibold text-zinc-100">{stat}</p>
+                  <p className="mt-1 text-[11px] text-zinc-600">sdk contract</p>
+                </div>
+              ),
+            )}
           </div>
         </div>
       </div>
@@ -168,10 +193,16 @@ export default function HomePage() {
             </span>
           </Link>
           <div className="ml-auto flex items-center gap-5 text-sm">
-            <a href="#architecture" className="hidden text-zinc-400 transition hover:text-zinc-100 sm:inline">
+            <a
+              href="#architecture"
+              className="hidden text-zinc-400 transition hover:text-zinc-100 sm:inline"
+            >
               Architecture
             </a>
-            <a href="#sdk" className="hidden text-zinc-400 transition hover:text-zinc-100 sm:inline">
+            <a
+              href="#sdk"
+              className="hidden text-zinc-400 transition hover:text-zinc-100 sm:inline"
+            >
               SDK
             </a>
             <Link
@@ -190,15 +221,14 @@ export default function HomePage() {
           <div className="mx-auto max-w-4xl text-center">
             <div className="mb-5 inline-flex w-fit items-center gap-2 border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-1.5 text-xs font-medium text-emerald-200">
               <CheckCircle2 size={13} />
-              Continuity protocol for agent swarms
+              Durable state for agent runtimes.
             </div>
             <h1 className="text-5xl font-semibold leading-[1.02] tracking-tight text-white sm:text-6xl">
-              Durable state for agent runtimes.
+              Continuity protocol for agent swarms
             </h1>
             <p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-zinc-400">
-              State Capsule is an SDK and protocol for checkpointing,
-              restoring, and verifying agent work across processes, frameworks,
-              and nodes.
+              State Capsule is an SDK and protocol for checkpointing, restoring,
+              and verifying agent work across processes, frameworks, and nodes.
             </p>
             <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
               <Link
@@ -226,9 +256,14 @@ export default function HomePage() {
       <section className="border-b border-white/[0.06]">
         <div className="mx-auto grid max-w-7xl gap-4 px-5 py-8 sm:grid-cols-3 sm:px-6">
           {capabilities.map(({ icon: Icon, title, body }) => (
-            <article key={title} className="border border-white/[0.07] bg-white/[0.015] p-5">
+            <article
+              key={title}
+              className="border border-white/[0.07] bg-white/[0.015] p-5"
+            >
               <Icon size={18} className="text-cyan-300" />
-              <h2 className="mt-5 text-base font-semibold text-zinc-100">{title}</h2>
+              <h2 className="mt-5 text-base font-semibold text-zinc-100">
+                {title}
+              </h2>
               <p className="mt-2 text-sm leading-6 text-zinc-500">{body}</p>
             </article>
           ))}
@@ -247,11 +282,17 @@ export default function HomePage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             {[
-              ["SDK", "create, update, restore, verify, subscribe"],
-              ["Protocol", "signed capsule chain with storage and anchor hooks"],
-              ["Demo", "open-source maintenance swarm built on top"],
+              ['SDK', 'create, update, restore, verify, subscribe'],
+              [
+                'Protocol',
+                'signed capsule chain with storage and anchor hooks',
+              ],
+              ['Demo', 'open-source maintenance swarm built on top'],
             ].map(([title, body]) => (
-              <div key={title} className="border border-white/[0.07] bg-[#101014] p-4">
+              <div
+                key={title}
+                className="border border-white/[0.07] bg-[#101014] p-4"
+              >
                 <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
                 <p className="mt-2 text-sm leading-6 text-zinc-500">{body}</p>
               </div>
@@ -279,12 +320,19 @@ export default function HomePage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               {stack.map(([name, description]) => (
-                <div key={name} className="border border-white/[0.07] bg-[#101014] p-4">
+                <div
+                  key={name}
+                  className="border border-white/[0.07] bg-[#101014] p-4"
+                >
                   <div className="flex items-center gap-2">
                     <CircuitBoard size={15} className="text-amber-300" />
-                    <h3 className="text-sm font-semibold text-zinc-100">{name}</h3>
+                    <h3 className="text-sm font-semibold text-zinc-100">
+                      {name}
+                    </h3>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-zinc-500">{description}</p>
+                  <p className="mt-3 text-sm leading-6 text-zinc-500">
+                    {description}
+                  </p>
                 </div>
               ))}
             </div>
@@ -307,21 +355,28 @@ export default function HomePage() {
               instead of asking teams to rewrite their stack.
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
-              {["OpenClaw", "LangChain", "Vercel AI SDK", "LlamaIndex"].map((item) => (
-                <span key={item} className="border border-white/[0.08] px-3 py-1.5 text-xs text-zinc-400">
-                  {item}
-                </span>
-              ))}
+              {['OpenClaw', 'LangChain', 'Vercel AI SDK', 'LlamaIndex'].map(
+                (item) => (
+                  <span
+                    key={item}
+                    className="border border-white/[0.08] px-3 py-1.5 text-xs text-zinc-400"
+                  >
+                    {item}
+                  </span>
+                ),
+              )}
             </div>
           </div>
 
           <div className="border border-white/[0.08] bg-[#101014]">
             <div className="flex items-center gap-2 border-b border-white/[0.07] px-4 py-3">
               <Boxes size={15} className="text-violet-300" />
-              <span className="text-sm font-medium text-zinc-200">restoreCapsule.ts</span>
+              <span className="text-sm font-medium text-zinc-200">
+                restoreCapsule.ts
+              </span>
             </div>
             <pre className="overflow-x-auto p-5 font-mono text-[12px] leading-6 text-zinc-300">
-{`const capsule = await restoreCapsule(taskId, {
+              {`const capsule = await restoreCapsule(taskId, {
   verifyChain: true,
   sealedSummary: true,
 });
@@ -341,7 +396,10 @@ await updateCapsule(capsule, {
           <span>State Capsule</span>
           <span className="hidden sm:inline">/</span>
           <span>SDK and protocol for crash-resilient agents</span>
-          <Link href="/demo" className="text-cyan-300/80 transition hover:text-cyan-200 sm:ml-auto">
+          <Link
+            href="/demo"
+            className="text-cyan-300/80 transition hover:text-cyan-200 sm:ml-auto"
+          >
             Open demo
           </Link>
         </div>
