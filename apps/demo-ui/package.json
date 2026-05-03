@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --port 3333",
     "build": "next build",
-    "start": "next start --port 3333"
+    "start": "next start --port 3333",
+    "test": "vitest run"
   },
   "dependencies": {
     "lucide-react": "^1.14.0",
@@ -20,6 +21,7 @@
     "autoprefixer": "^10.4.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
   }
 }

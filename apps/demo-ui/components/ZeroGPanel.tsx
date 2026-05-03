@@ -154,9 +154,8 @@ export function ZeroGPanel({ capsule }: { capsule: CapsuleInfo }) {
               {capsule.computeModel}
             </p>
             {capsule.computeSummary && (
-              <p className="text-zinc-400 text-xs mt-1.5 leading-snug">
-                {capsule.computeSummary.slice(0, 160)}
-                {capsule.computeSummary.length > 160 ? "…" : ""}
+              <p className="text-zinc-400 text-xs mt-1.5 leading-snug max-h-40 overflow-y-auto pr-1 whitespace-pre-wrap break-words">
+                {capsule.computeSummary}
               </p>
             )}
           </Section>

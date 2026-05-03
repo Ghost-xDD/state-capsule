@@ -75,6 +75,8 @@ export interface RunEntry {
   repoUrl: string;
   repoFile: string;
   lines: string[];
+  /** Incomplete trailing line from last stdout chunk (stream may split mid-line). */
+  lineCarry: string;
   done: boolean;
   error: string | null;
   capsule: CapsuleInfo;
@@ -104,6 +106,7 @@ export function create(taskId: string, repoUrl: string, repoFile: string): void 
     repoUrl,
     repoFile,
     lines: [],
+    lineCarry: "",
     done: false,
     error: null,
     startedAt: Date.now(),
@@ -219,8 +222,15 @@ function parseLine(entry: RunEntry, raw: string): void {
   const patchMatch = line.match(/\[patcher:patch\]\s+(.+)/);
   if (patchMatch) {
     try {
-      const obj = JSON.parse(patchMatch[1]!) as { patched_source?: string };
-      if (obj.patched_source) info.patch = obj.patched_source;
+      const obj = JSON.parse(patchMatch[1]!) as {
+        patched_source?: string;
+        unified_diff?: string;
+      };
+      if (obj.unified_diff) {
+        info.patch = obj.unified_diff;
+      } else if (obj.patched_source) {
+        info.patch = obj.patched_source;
+      }
     } catch {/* ignore */}
   }
 
@@ -346,6 +356,21 @@ function parseLine(entry: RunEntry, raw: string): void {
     pushActivity(entry, { type: "info", agent: "patcher", message: `Patcher applied ${n} fixes` });
     return;
   }
+  const patchDiffMatch = line.match(/\[patcher\] Patch diff: \+(\d+) -(\d+)/);
+  if (patchDiffMatch) {
+    const adds = parseInt(patchDiffMatch[1]!, 10);
+    const dels = parseInt(patchDiffMatch[2]!, 10);
+    bumpAgent(entry, "patcher", {
+      activity: `generated diff (+${adds} -${dels})`,
+      summary: `+${adds} -${dels}`,
+    });
+    pushActivity(entry, {
+      type: "info",
+      agent: "patcher",
+      message: `Patcher generated a non-empty diff (+${adds} -${dels})`,
+    });
+    return;
+  }
 
   // ── Reviewer outputs ──────────────────────────────────────────────────────
   if (/\[reviewer\] Reviewing/.test(line)) {
@@ -390,16 +415,35 @@ function parseLine(entry: RunEntry, raw: string): void {
 export function append(taskId: string, chunk: string): void {
   const entry = store.get(taskId);
   if (!entry) return;
-  for (const line of chunk.split("\n")) {
+
+  entry.lineCarry += chunk;
+  for (;;) {
+    const nl = entry.lineCarry.indexOf("\n");
+    if (nl === -1) break;
+    let line = entry.lineCarry.slice(0, nl);
+    entry.lineCarry = entry.lineCarry.slice(nl + 1);
+    if (line.endsWith("\r")) line = line.slice(0, -1);
     if (line === "") continue;
     entry.lines.push(line);
     parseLine(entry, line);
   }
 }
 
+/** Flush any trailing bytes without a final newline (process exit). */
+function flushLineCarry(entry: RunEntry): void {
+  if (entry.lineCarry === "") return;
+  let line = entry.lineCarry;
+  entry.lineCarry = "";
+  if (line.endsWith("\r")) line = line.slice(0, -1);
+  if (line === "") return;
+  entry.lines.push(line);
+  parseLine(entry, line);
+}
+
 export function markDone(taskId: string, error?: string): void {
   const entry = store.get(taskId);
   if (!entry) return;
+  flushLineCarry(entry);
   entry.done = true;
   if (error) entry.error = error;
 }

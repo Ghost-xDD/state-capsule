@@ -268,9 +268,12 @@ async function main(): Promise<void> {
     const summary = await fetchSealedSummary(final);
     if (summary.attested) {
       ok(`attested  : ${summary.model}  confidence=${summary.confidence}`);
-      ok(`summary   : ${summary.summary.slice(0, 90)}…`);
+      // One line so demo-ui run-store regex captures the full summary (not a 90-char teaser).
+      const oneLine = summary.summary.replace(/\s+/g, " ").trim();
+      ok(`summary   : ${oneLine}`);
     } else {
-      info(`local fallback (no OG_COMPUTE_SERVICE_URL): ${summary.summary.slice(0, 80)}…`);
+      const oneLine = summary.summary.replace(/\s+/g, " ").trim();
+      info(`local fallback (no OG_COMPUTE_SERVICE_URL): ${oneLine}`);
     }
   } catch (err) {
     warn(`sealed summary failed (non-fatal): ${err}`);

@@ -8,7 +8,7 @@
 
 import { execSync } from "node:child_process";
 import { mkdtempSync, statSync, readdirSync } from "node:fs";
-import { join, extname, relative } from "node:path";
+import { join, extname, relative, sep } from "node:path";
 import os from "node:os";
 
 const SKIP_DIRS = new Set([
@@ -22,6 +22,16 @@ const SKIP_DIRS = new Set([
   ".turbo",
   "out",
   ".cache",
+]);
+
+const LOW_SIGNAL_DIRS = new Set([
+  "__tests__",
+  "__fixtures__",
+  "fixtures",
+  "test",
+  "tests",
+  "spec",
+  "e2e",
 ]);
 
 const SKIP_FILES = new Set([
@@ -70,11 +80,29 @@ export async function cloneAndPick(repoUrl: string): Promise<CloneResult> {
     throw new Error("No TypeScript/JavaScript source files found in the repository.");
   }
 
-  // Rank by size descending — the largest source file is usually the most
-  // feature-rich and therefore the most interesting target for bug finding.
+  // Prefer implementation files over tests/fixtures. The patcher demo looks
+  // fake when the target is a giant test fixture, even if that is the largest
+  // JavaScript file in the repo.
   const ranked = files
-    .map((f) => ({ f, size: statSync(f).size }))
-    .sort((a, b) => b.size - a.size);
+    .map((f) => {
+      const rel = relative(dir, f);
+      const parts = rel.split(sep);
+      const inSourceDir = parts.some((p) => ["src", "source", "lib"].includes(p));
+      const lowSignal = parts.some((p) => LOW_SIGNAL_DIRS.has(p)) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(rel);
+      const ext = extname(f);
+      const extScore = ext === ".ts" || ext === ".tsx" ? 1_000 : 0;
+
+      return {
+        f,
+        size: statSync(f).size,
+        score:
+          (inSourceDir ? 20_000 : 0) +
+          (lowSignal ? -30_000 : 0) +
+          extScore +
+          Math.min(statSync(f).size, 12_000),
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.size - a.size);
 
   const best = ranked[0]!;
   return {
