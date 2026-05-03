@@ -6,6 +6,7 @@ import { cloneAndPick } from "@/lib/repo-loader";
 import * as runStore from "@/lib/run-store";
 import {
   HOSTED_REPLAY_FILE,
+  HOSTED_REPLAY_REPO,
   HOSTED_REPLAY_TASK_ID,
   HOSTED_REPLAY_TOTAL_FILES,
   isHostedReplayEnabled,
@@ -18,6 +19,10 @@ const DEMO_SCRIPT = resolve(
   WORKSPACE_ROOT,
   "examples/maintainer-swarm/src/scripts/demo-run.ts",
 );
+
+function normalizeRepoUrl(repoUrl: string): string {
+  return repoUrl.replace(/\/+$/, "");
+}
 
 // Load .env from workspace root so LLM keys / 0G keys are available to the
 // child process even when Next.js doesn't source them automatically.
@@ -47,7 +52,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const repoUrl = typeof body.repoUrl === "string" ? body.repoUrl.trim() : "";
+  const repoUrl = normalizeRepoUrl(
+    typeof body.repoUrl === "string" ? body.repoUrl.trim() : "",
+  );
   if (!repoUrl || !repoUrl.startsWith("https://github.com/")) {
     return NextResponse.json(
       { error: "Must be a https://github.com/… URL" },
@@ -56,6 +63,13 @@ export async function POST(req: NextRequest) {
   }
 
   if (isHostedReplayEnabled()) {
+    if (repoUrl !== HOSTED_REPLAY_REPO) {
+      return NextResponse.json(
+        { error: `Hosted replay only supports ${HOSTED_REPLAY_REPO}` },
+        { status: 400 },
+      );
+    }
+
     return NextResponse.json({
       taskId: HOSTED_REPLAY_TASK_ID,
       relFile: HOSTED_REPLAY_FILE,
