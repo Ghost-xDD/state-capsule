@@ -1,5 +1,10 @@
 import { NextRequest } from "next/server";
 import * as runStore from "@/lib/run-store";
+import {
+  getHostedReplaySteps,
+  HOSTED_REPLAY_TASK_ID,
+  isHostedReplayEnabled,
+} from "@/lib/hosted-replay";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +13,10 @@ export async function GET(
   { params }: { params: { id: string } },
 ) {
   const taskId = params.id;
+
+  if (isHostedReplayEnabled() && taskId === HOSTED_REPLAY_TASK_ID) {
+    return streamHostedReplay(req);
+  }
 
   // EventSource auto-reconnects after the server closes the stream. Respect
   // the standard `Last-Event-ID` header so reconnects resume from the next
@@ -107,6 +116,62 @@ export async function GET(
       "Content-Type":   "text/event-stream",
       "Cache-Control":  "no-cache, no-transform",
       Connection:       "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+function streamHostedReplay(req: NextRequest): Response {
+  const steps = getHostedReplaySteps();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const enc = new TextEncoder();
+      let closed = false;
+
+      const send = (id: number, payload: object) => {
+        if (closed) return;
+        const candidate = payload as { type?: unknown; event?: object };
+        const outgoing =
+          candidate.type === "activity" && candidate.event
+            ? {
+                ...payload,
+                event: {
+                  ...candidate.event,
+                  ts: Date.now(),
+                },
+              }
+            : payload;
+        controller.enqueue(
+          enc.encode(`id: ${id}\ndata: ${JSON.stringify(outgoing)}\n\n`),
+        );
+      };
+
+      controller.enqueue(enc.encode("retry: 86400000\n\n"));
+
+      const timers = steps.map((step, index) =>
+        setTimeout(() => {
+          send(index, step.event);
+          if (index === steps.length - 1) {
+            closed = true;
+            controller.close();
+          }
+        }, step.delayMs),
+      );
+
+      req.signal.addEventListener("abort", () => {
+        closed = true;
+        for (const timer of timers) clearTimeout(timer);
+        try { controller.close(); } catch { /* already closed */ }
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     },
   });

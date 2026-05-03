@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { cloneAndPick } from "@/lib/repo-loader";
 import * as runStore from "@/lib/run-store";
+import {
+  HOSTED_REPLAY_FILE,
+  HOSTED_REPLAY_TASK_ID,
+  HOSTED_REPLAY_TOTAL_FILES,
+  isHostedReplayEnabled,
+} from "@/lib/hosted-replay";
 
 // apps/demo-ui is 2 levels deep → workspace root is 2 levels up
 const WORKSPACE_ROOT = resolve(process.cwd(), "../..");
@@ -47,6 +53,15 @@ export async function POST(req: NextRequest) {
       { error: "Must be a https://github.com/… URL" },
       { status: 400 },
     );
+  }
+
+  if (isHostedReplayEnabled()) {
+    return NextResponse.json({
+      taskId: HOSTED_REPLAY_TASK_ID,
+      relFile: HOSTED_REPLAY_FILE,
+      totalFiles: HOSTED_REPLAY_TOTAL_FILES,
+      replay: true,
+    });
   }
 
   // Clone the repo and find the best source file

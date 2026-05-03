@@ -10,7 +10,15 @@ import {
 } from "lucide-react";
 import { DemoLauncher } from "@/components/DemoLauncher";
 
-const demoSteps = [
+const hostedReplay =
+  process.env["DEMO_UI_MODE"] === "replay" || process.env["VERCEL"] === "1";
+
+const demoSteps = hostedReplay ? [
+  "Stream a hosted replay captured from a live run",
+  "Show the forced Reproducer kill and restore",
+  "Preserve the restored test plan after restart",
+  "Display generated patch and reviewer verdict",
+] : [
   "Clone target repository",
   "Run four-agent maintainer swarm",
   "Checkpoint capsule state to 0G",
@@ -45,12 +53,14 @@ export default function DemoPage() {
             MaintainerSwarm demo
           </p>
           <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight text-white sm:text-5xl">
-            Paste a repo and watch the continuity layer do real work.
+            {hostedReplay
+              ? "Watch the captured continuity demo."
+              : "Paste a repo and watch the continuity layer do real work."}
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-zinc-400">
-            The demo clones a GitHub repository, starts the specialist swarm,
-            streams each capsule update, and lands on the run dashboard when
-            the task is created.
+            {hostedReplay
+              ? "The hosted version streams a deterministic replay captured from a live MaintainerSwarm run. Local mode still runs the pipeline directly."
+              : "The demo clones a GitHub repository, starts the specialist swarm, streams each capsule update, and lands on the run dashboard when the task is created."}
           </p>
 
           <div className="mt-8 grid gap-3">
@@ -68,7 +78,7 @@ export default function DemoPage() {
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {[
               [Network, "AXL mesh", "four specialist nodes"],
-              [Database, "0G Storage", "KV head and log trail"],
+              [Database, "State capsules", "signed checkpoint chain"],
               [ShieldCheck, "Signed capsules", "verified handoffs"],
               [GitBranch, "Patch output", "reviewed local diff"],
             ].map(([Icon, title, body]) => {

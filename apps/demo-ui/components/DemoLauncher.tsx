@@ -10,6 +10,7 @@ const EXAMPLE_REPOS = [
 ];
 
 export function DemoLauncher({ compact = false }: { compact?: boolean }) {
+  const hostedReplay = process.env["NEXT_PUBLIC_DEMO_UI_MODE"] === "replay";
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,7 +60,7 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
       }
     >
       <label className="block text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-500">
-        GitHub repository
+        {hostedReplay ? "Replay source" : "GitHub repository"}
       </label>
       <div className="mt-2 flex flex-col gap-2 sm:flex-row">
         <input
@@ -67,7 +68,7 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://github.com/you/your-ts-lib"
+          placeholder={hostedReplay ? "https://github.com/sindresorhus/execa" : "https://github.com/you/your-ts-lib"}
           disabled={loading}
           className="min-h-11 flex-1 border border-white/[0.09] bg-black/30 px-3.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/10 disabled:opacity-50"
           required
@@ -84,7 +85,7 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
             </>
           ) : (
             <>
-              Run swarm
+              {hostedReplay ? "Watch replay" : "Run swarm"}
               <ArrowRight size={15} />
             </>
           )}
@@ -98,7 +99,7 @@ export function DemoLauncher({ compact = false }: { compact?: boolean }) {
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-zinc-600">Try</span>
+        <span className="text-xs text-zinc-600">{hostedReplay ? "Captured from" : "Try"}</span>
         {EXAMPLE_REPOS.map((repo) => (
           <button
             key={repo}
