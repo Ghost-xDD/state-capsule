@@ -13,7 +13,7 @@
 <h1 align="center">State Capsule</h1>
 
 <p align="center">
-  <strong>Durable state for agent runtimes.</strong><br/>
+  <strong>A continuity protocol for multi-agent systems.</strong><br/>
   <em>Checkpoint work. Verify handoffs. Resume after crashes.</em>
 </p>
 
