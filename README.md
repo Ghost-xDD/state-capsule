@@ -22,8 +22,25 @@
   <a href="#architecture"><img src="https://img.shields.io/badge/-Architecture-7C3AED?style=flat-square" alt="Architecture" /></a>&nbsp;
   <a href="#sdk"><img src="https://img.shields.io/badge/-SDK-22C55E?style=flat-square" alt="SDK" /></a>&nbsp;
   <a href="#maintainerswarm-demo"><img src="https://img.shields.io/badge/-Demo-F59E0B?style=flat-square" alt="Demo" /></a>&nbsp;
-  <a href="#integrations"><img src="https://img.shields.io/badge/-Integrations-3B82F6?style=flat-square" alt="Integrations" /></a>
+  <a href="#sponsor-integration-depth"><img src="https://img.shields.io/badge/-Sponsor%20Depth-3B82F6?style=flat-square" alt="Sponsor Integration Depth" /></a>
 </p>
+
+---
+
+## Table of Contents
+
+- [What Is State Capsule?](#what-is-state-capsule)
+- [SDK vs Demo](#sdk-vs-demo)
+- [Why It Exists](#why-it-exists)
+- [Architecture](#architecture)
+- [SDK](#sdk)
+- [MaintainerSwarm Demo](#maintainerswarm-demo)
+- [Quick Start](#quick-start)
+- [Sponsor Integration Depth](#sponsor-integration-depth)
+- [Framework Adapters](#framework-adapters)
+- [Repository Layout](#repository-layout)
+- [Environment](#environment)
+- [Development Commands](#development-commands)
 
 ---
 
@@ -308,16 +325,19 @@ pnpm spike
 
 ---
 
-## Integrations
+## Sponsor Integration Depth
 
 ### 0G Network
 
-| Component | State Capsule usage | Package / module |
-|:----------|:--------------------|:-----------------|
-| **0G Storage KV** | Mutable latest capsule head by `task_id` | `packages/state-capsule-sdk/src/storage.ts` |
-| **0G Storage blobs/logs** | Capsule payload and lineage roots | `packages/state-capsule-sdk/src/storage.ts` |
-| **0G Chain** | Linear anchor and stale-parent rejection | `packages/state-capsule-contracts/src/CapsuleRegistry.sol` |
-| **0G Compute** | Sealed handoff summaries for fast restore | `packages/state-capsule-sdk/src/sealed-summary.ts` |
+State Capsule is built as a **framework-level primitive** for 0G agent builders, not just an app that happens to call 0G. The SDK uses the full 0G stack as the durability layer for agent continuity.
+
+| 0G component | What we built | Why it matters |
+|:-------------|:--------------|:---------------|
+| **0G Storage KV** | Mutable capsule head keyed by `task_id` | Any fresh agent can resolve `task_id -> latest capsule` in one read |
+| **0G Storage blobs/logs** | Append-only capsule chain, stored as content-addressed payloads | Every state transition has an auditable provenance trail |
+| **0G Chain** | `CapsuleRegistry` anchor with stale-parent rejection | Concurrent writers cannot silently fork task state |
+| **0G Compute** | Sealed handoff summary for long capsule chains | A replacement agent can load verified context without replaying the whole log |
+| **SDK hooks** | `onAfterUpdate`, storage adapters, chain config, sealed summary API | Other frameworks can adopt the primitive without rewriting their runtime |
 
 Deployed registry:
 
@@ -325,20 +345,34 @@ Deployed registry:
 |:--------|:---------|:--------|
 | 0G testnet | `CapsuleRegistry` | `0x0C90470bFf685eFEDc03Ffff5ACBfFebb0D0cd03` |
 
+The core value for 0G: State Capsule turns 0G Storage, Compute, and Chain into a reusable **agent-brain continuity layer**. MaintainerSwarm is the proof that the primitive handles a real multi-agent workflow under failure.
+
 ### Gensyn AXL
 
-MaintainerSwarm uses AXL as the live coordination layer. State Capsule handles durable state; AXL handles message delivery between agents.
+AXL is the **only live coordination fabric** in MaintainerSwarm. There is no fallback broker in the demo path: State Capsule handles durable state, and AXL handles role-to-role messaging across separate processes.
 
 | AXL surface | Usage |
 |:------------|:------|
-| `/send` / `/recv` | Role-to-role coordination messages |
-| `/a2a/` | Structured handoffs between specialists |
-| GossipSub | Broadcast capsule update events |
-| `/mcp/` | Tool exposure path for sandbox/test helpers |
+| **4 separate nodes** | Triager, Reproducer, Patcher, Reviewer each run as their own role/process |
+| `/send` / `/recv` | Capsule handoff signals and coordination messages |
+| `/a2a/` | Structured task assignment between specialists |
+| GossipSub | Live broadcast of capsule update events |
+| `/mcp/` | Tool exposure path for sandbox/test helpers such as run-tests, git-diff, search-codebase |
+
+Why AXL is not decorative here:
+
+- The Reproducer needs sandbox isolation because it runs untrusted target code.
+- The Reviewer should be independent from the Patcher to provide adversarial signal.
+- Specialists may use different model providers or trust domains.
+- Killing an agent should not destroy the task; a replacement restores from State Capsule and rejoins the AXL mesh.
+
+Remove AXL and the live swarm cannot coordinate. Remove State Capsule and the swarm cannot recover.
 
 ### ENS
 
-ENS is used as a state pointer, not a profile badge.
+ENS is used as a **live state primitive**, not an identity card.
+
+Every task can publish a subname such as `task-<short-id>.maintainerswarm.eth`. Its text records mirror the current capsule state:
 
 | Record | Meaning |
 |:-------|:--------|
@@ -347,16 +381,73 @@ ENS is used as a state pointer, not a profile badge.
 | `capsule.log_root` | Latest storage/log root |
 | `capsule.status` | Active, held, or done |
 
-The ENS integration is deliberately graceful: if task-pointer publishing fails, capsule writes still succeed.
+That makes the kill-and-resume moment observable with normal resolver tooling:
 
-### Framework Adapters
+```text
+capsule.holder = reproducer     # before crash recovery
+capsule.status = held
 
-| Adapter | Status | Purpose |
-|:--------|:-------|:--------|
-| OpenClaw | included | Wraps agent memory with capsule checkpoints |
-| LangChain | included | Memory/Runnable integration |
-| Vercel AI SDK | included | Step-finish checkpoint hooks |
-| LlamaIndex | planned | Memory backend integration |
+capsule.holder = reproducer-2   # after fresh process restores and claims task
+capsule.status = active
+```
+
+The ENS package also includes delegation-subname helpers: a current holder can issue a single-use child subname carrying a capsule reference and expiry. Revocation is modeled as burning or invalidating the subname. If ENS or NameStone is unavailable, the SDK degrades gracefully and the capsule write still succeeds.
+
+---
+
+## Framework Adapters
+
+Adapters are what make State Capsule a framework primitive instead of a bespoke demo runtime. Each adapter exposes a small integration point that checkpoints the framework's existing execution loop into signed capsules.
+
+| Adapter | Package | Integration point | What gets checkpointed |
+|:--------|:--------|:------------------|:-----------------------|
+| **OpenClaw** | `@state-capsule/adapter-openclaw` | `createStateCapsuleMemory()` memory backend | Markdown memory sections become capsule facts, decisions, pending actions, and next action |
+| **LangChain.js** | `@state-capsule/adapter-langchain` | `StateCapsuleMemory` + `withCapsuleMemory()` Runnable wrapper | Chain inputs/outputs and restored capsule context |
+| **Vercel AI SDK** | `@state-capsule/adapter-vercel-ai` | `onStepFinish` middleware for `generateText` / `streamText` | Step text, tool calls, finish reason, continued state |
+| **LlamaIndex** | planned | Memory backend | Capsule-backed task memory |
+
+### Adapter Examples
+
+OpenClaw memory flush:
+
+```ts
+const memory = createStateCapsuleMemory(sdk, {
+  taskId: "session-abc",
+  holder: "assistant",
+});
+
+const context = await memory.read();
+await memory.write(context + "\n## Facts\n- user prefers TypeScript");
+```
+
+LangChain Runnable wrapper:
+
+```ts
+const memory = new StateCapsuleMemory(sdk, {
+  taskId: "fix-bug-42",
+  holder: "agent",
+});
+
+const wrapped = withCapsuleMemory(chain, memory);
+const result = await wrapped.invoke({ input: "What's next?" });
+```
+
+Vercel AI SDK step checkpoint:
+
+```ts
+const middleware = createCapsuleMiddleware(sdk, {
+  taskId: "patch-pr-99",
+  holder: "agent",
+});
+
+await generateText({
+  model,
+  prompt: "Fix the failing tests.",
+  onStepFinish: middleware.onStepFinish,
+});
+```
+
+The adapter goal is intentionally boring: add continuity to existing agent code with one memory object or one callback, then let the SDK handle signing, storage, restoration, and verification.
 
 ---
 
