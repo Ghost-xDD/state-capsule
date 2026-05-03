@@ -31,13 +31,13 @@ import {
   createMemoryStorage,
   fetchSealedSummary,
   ZeroGConfigSchema,
-} from "@state-capsule/sdk";
-import type { Capsule, UpdateCapsuleInput, ZeroGConfig, ChainConfig } from "@state-capsule/sdk";
+} from "@ghostxd/state-capsule-sdk";
+import type { Capsule, UpdateCapsuleInput, ZeroGConfig, ChainConfig } from "@ghostxd/state-capsule-sdk";
 import {
   createRegistrarFromEnv,
   buildEnsUpdateHook,
   taskLabel,
-} from "@state-capsule/ens";
+} from "@ghostxd/state-capsule-ens";
 import { triagerHandler }    from "../handlers/triager.js";
 import { reproducerHandler } from "../handlers/reproducer.js";
 import { patcherHandler }    from "../handlers/patcher.js";

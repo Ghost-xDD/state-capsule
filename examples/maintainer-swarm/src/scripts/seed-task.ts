@@ -20,13 +20,13 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../../.env"), override: true });
 
-import { StateCapsule, createMemoryStorage } from "@state-capsule/sdk";
-import { AxlClient, type CapsuleEnvelope } from "@state-capsule/sdk";
+import { StateCapsule, createMemoryStorage } from "@ghostxd/state-capsule-sdk";
+import { AxlClient, type CapsuleEnvelope } from "@ghostxd/state-capsule-sdk";
 import {
   createRegistrarFromEnv,
   buildEnsUpdateHook,
   taskLabel,
-} from "@state-capsule/ens";
+} from "@ghostxd/state-capsule-ens";
 
 async function main() {
   const triagerUrl    = process.env["TRIAGER_AXL_URL"]    ?? "http://127.0.0.1:9101";

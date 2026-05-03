@@ -16,20 +16,20 @@ import {
   type ZeroGConfig,
   ZeroGConfigSchema,
   fetchSealedSummary,
-} from "@state-capsule/sdk";
+} from "@ghostxd/state-capsule-sdk";
 import {
   AxlClient,
   GossipSub,
   axlUrlFromEnv,
   type CapsuleEnvelope,
   type CapsuleAnnounce,
-} from "@state-capsule/sdk";
+} from "@ghostxd/state-capsule-sdk";
 import {
   createRegistrarFromEnv,
   buildEnsUpdateHook,
   buildDelegationIssuer,
   buildDelegationRevoker,
-} from "@state-capsule/ens";
+} from "@ghostxd/state-capsule-ens";
 import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
 
 // ── Types ─────────────────────────────────────────────────────────────────────

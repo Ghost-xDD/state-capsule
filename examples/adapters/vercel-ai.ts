@@ -7,8 +7,8 @@
  * Run: npx tsx examples/adapters/vercel-ai.ts
  */
 
-import { StateCapsule }            from "@state-capsule/sdk";
-import { createCapsuleMiddleware } from "@state-capsule/adapter-vercel-ai";
+import { StateCapsule }            from "@ghostxd/state-capsule-sdk";
+import { createCapsuleMiddleware } from "@ghostxd/state-capsule-adapter-vercel-ai";
 
 async function main(): Promise<void> {
   const sdk        = new StateCapsule();

@@ -1,13 +1,13 @@
 /**
- * smoke.test.ts — OpenClaw adapter smoke tests.
+ * smoke.test.ts - OpenClaw adapter smoke tests.
  * Uses in-memory StateCapsule (no 0G or OpenClaw runtime required).
  */
 import { describe, it, expect } from "vitest";
-import { StateCapsule }         from "@state-capsule/sdk";
+import { StateCapsule }         from "@ghostxd/state-capsule-sdk";
 import { createStateCapsuleMemory } from "../src/index.js";
 
 describe("openclaw adapter smoke", () => {
-  it("write → read round-trip preserves facts and next_action", async () => {
+  it("write/read round-trip preserves facts and next_action", async () => {
     const sdk = new StateCapsule();
     const mem = createStateCapsuleMemory(sdk, { taskId: "oc-1", holder: "agent" });
 

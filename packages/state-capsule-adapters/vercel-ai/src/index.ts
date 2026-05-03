@@ -6,7 +6,7 @@
  * or `streamText` — no other changes to your AI SDK code required.
  *
  * Usage:
- *   import { createCapsuleMiddleware } from "@state-capsule/adapter-vercel-ai";
+ *   import { createCapsuleMiddleware } from "@ghostxd/state-capsule-adapter-vercel-ai";
  *
  *   const middleware = createCapsuleMiddleware(sdk, {
  *     taskId: "fix-bug-123",
@@ -22,7 +22,7 @@
  *   const capsule = await middleware.restore(); // full state after generation
  */
 
-import type { StateCapsule, Capsule } from "@state-capsule/sdk";
+import type { StateCapsule, Capsule } from "@ghostxd/state-capsule-sdk";
 
 export type { StateCapsule, Capsule };
 
@@ -70,7 +70,7 @@ export class CapsuleMiddleware {
       taskId:        opts.taskId,
       holder:        opts.holder,
       goal:          opts.goal ?? `Vercel AI task: ${opts.taskId}`,
-      onCheckpoint:  opts.onCheckpoint,
+      ...(opts.onCheckpoint ? { onCheckpoint: opts.onCheckpoint } : {}),
     };
   }
 

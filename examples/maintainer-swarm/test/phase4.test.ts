@@ -30,9 +30,9 @@ vi.mock("../src/llm.js", async (importOriginal) => {
 
 // ── Imports (after mock registration) ────────────────────────────────────────
 
-import { StateCapsule, createMemoryStorage } from "@state-capsule/sdk";
-import type { Capsule }                       from "@state-capsule/sdk";
-import type { CapsuleEnvelope }               from "@state-capsule/sdk";
+import { StateCapsule, createMemoryStorage } from "@ghostxd/state-capsule-sdk";
+import type { Capsule }                       from "@ghostxd/state-capsule-sdk";
+import type { CapsuleEnvelope }               from "@ghostxd/state-capsule-sdk";
 import { callLLM }                            from "../src/llm.js";
 import { triagerHandler }                     from "../src/handlers/triager.js";
 import { reproducerHandler }                  from "../src/handlers/reproducer.js";

@@ -1,10 +1,35 @@
 {
-  "name": "@state-capsule/sdk",
+  "name": "@ghostxd/state-capsule-sdk",
   "version": "0.1.0",
   "description": "State Capsule SDK — continuity protocol for multi-agent systems",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Ghost-xDD/state-capsule#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ghost-xDD/state-capsule.git",
+    "directory": "packages/state-capsule-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/Ghost-xDD/state-capsule/issues"
+  },
+  "keywords": [
+    "agents",
+    "ai-agents",
+    "checkpoint",
+    "continuity",
+    "multi-agent",
+    "state",
+    "0g",
+    "ens",
+    "gossipsub"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",

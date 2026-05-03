@@ -1,22 +1,22 @@
 /**
- * State Capsule × OpenClaw adapter.
+ * State Capsule OpenClaw adapter.
  *
  * Wraps StateCapsule as OpenClaw's working memory: each memory flush is
  * checkpointed as a signed capsule on 0G Storage, giving every agent session
  * cryptographic continuity and cross-process restore.
  *
  * Usage:
- *   import { createStateCapsuleMemory } from "@state-capsule/adapter-openclaw";
+ *   import { createStateCapsuleMemory } from "@ghostxd/state-capsule-adapter-openclaw";
  *   const memory = createStateCapsuleMemory(sdk, { taskId: "my-task", holder: "agent" });
  *   const md     = await memory.read();          // inject into system prompt
  *   await memory.write(md + "\n- new fact");     // flush after session turn
  */
 
-import type { StateCapsule, Capsule } from "@state-capsule/sdk";
+import type { StateCapsule, Capsule } from "@ghostxd/state-capsule-sdk";
 
 export type { StateCapsule, Capsule };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// Types
 
 export interface OpenClawMemoryOptions {
   /** Unique task or session ID. */
@@ -36,14 +36,14 @@ export interface MemorySnapshot {
   updatedAt: string;
 }
 
-// ── StateCapsuleMemory ────────────────────────────────────────────────────────
+// StateCapsuleMemory
 
 /**
  * OpenClaw-compatible memory adapter backed by State Capsule.
  *
- * - `read()`  — restore the latest capsule, render as Markdown.
- * - `write()` — create/update a capsule with the structured Markdown memory.
- * - `clear()` — reset in-memory head pointer (capsule chain is immutable).
+ * - `read()` restores the latest capsule and renders it as Markdown.
+ * - `write()` creates/updates a capsule with the structured Markdown memory.
+ * - `clear()` resets the in-memory head pointer.
  */
 export class StateCapsuleMemory {
   private readonly sdk:  StateCapsule;
@@ -57,7 +57,7 @@ export class StateCapsuleMemory {
       taskId: opts.taskId,
       holder: opts.holder,
       goal:   opts.goal ?? `OpenClaw session: ${opts.taskId}`,
-      onWrite: opts.onWrite,
+      ...(opts.onWrite ? { onWrite: opts.onWrite } : {}),
     };
   }
 
@@ -119,7 +119,7 @@ export class StateCapsuleMemory {
   }
 }
 
-// ── Factory ───────────────────────────────────────────────────────────────────
+// Factory
 
 export function createStateCapsuleMemory(
   sdk:  StateCapsule,
@@ -128,7 +128,7 @@ export function createStateCapsuleMemory(
   return new StateCapsuleMemory(sdk, opts);
 }
 
-// ── Serialisation helpers ─────────────────────────────────────────────────────
+// Serialization helpers
 
 interface CapsuleFields {
   facts:           string[];
@@ -139,10 +139,18 @@ interface CapsuleFields {
 
 function _capsuleToMarkdown(c: CapsuleFields & { goal?: string }): string {
   const lines: string[] = [];
-  if (c.facts.length)           { lines.push("## Facts",           ...c.facts.map(f => `- ${f}`),           ""); }
-  if (c.decisions.length)       { lines.push("## Decisions",       ...c.decisions.map(d => `- ${d}`),       ""); }
-  if (c.pending_actions.length) { lines.push("## Pending Actions", ...c.pending_actions.map(a => `- ${a}`), ""); }
-  if (c.next_action)            { lines.push(`## Next Action\n${c.next_action}`,                             ""); }
+  if (c.facts.length) {
+    lines.push("## Facts", ...c.facts.map((fact) => `- ${fact}`), "");
+  }
+  if (c.decisions.length) {
+    lines.push("## Decisions", ...c.decisions.map((decision) => `- ${decision}`), "");
+  }
+  if (c.pending_actions.length) {
+    lines.push("## Pending Actions", ...c.pending_actions.map((action) => `- ${action}`), "");
+  }
+  if (c.next_action) {
+    lines.push(`## Next Action\n${c.next_action}`, "");
+  }
   return lines.join("\n").trimEnd();
 }
 

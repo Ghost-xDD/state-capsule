@@ -2,13 +2,13 @@
  * LangChain adapter example.
  *
  * Demonstrates StateCapsuleMemory + withCapsuleMemory without a real LLM.
- * Set ZERÖG_* env vars + CAPSULE_PRIVATE_KEY to use real 0G Storage.
+ * Set ZEROG_* env vars + CAPSULE_PRIVATE_KEY to use real 0G Storage.
  *
  * Run: npx tsx examples/adapters/langchain.ts
  */
 
-import { StateCapsule }                         from "@state-capsule/sdk";
-import { StateCapsuleMemory, withCapsuleMemory } from "@state-capsule/adapter-langchain";
+import { StateCapsule }                         from "@ghostxd/state-capsule-sdk";
+import { StateCapsuleMemory, withCapsuleMemory } from "@ghostxd/state-capsule-adapter-langchain";
 
 async function main(): Promise<void> {
   const sdk    = new StateCapsule();
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
 
   const result = await wrapped.invoke("What should we do next?");
   console.log("[langchain] chain result:", result);
-  console.log("[langchain] ✓ done");
+  console.log("[langchain] done");
 }
 
 main().catch(console.error);

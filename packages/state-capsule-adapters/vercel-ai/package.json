@@ -1,5 +1,5 @@
 {
-  "name": "@state-capsule/adapter-vercel-ai",
+  "name": "@ghostxd/state-capsule-adapter-vercel-ai",
   "version": "0.1.0",
   "description": "State Capsule adapter for Vercel AI SDK — onStepFinish checkpoint middleware",
   "type": "module",
@@ -17,14 +17,14 @@
     "test":      "vitest run"
   },
   "peerDependencies": {
-    "@state-capsule/sdk": "workspace:*",
+    "@ghostxd/state-capsule-sdk": "workspace:*",
     "ai":                 ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "ai": { "optional": true }
   },
   "devDependencies": {
-    "@state-capsule/sdk": "workspace:*",
+    "@ghostxd/state-capsule-sdk": "workspace:*",
     "typescript":         "^5.5.0",
     "vitest":             "^2.0.0"
   }

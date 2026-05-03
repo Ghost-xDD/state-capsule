@@ -1,9 +1,9 @@
 /**
- * smoke.test.ts — LangChain adapter smoke tests.
+ * smoke.test.ts - LangChain adapter smoke tests.
  * Uses in-memory StateCapsule and a fake Runnable (no real LLM required).
  */
 import { describe, it, expect } from "vitest";
-import { StateCapsule }         from "@state-capsule/sdk";
+import { StateCapsule }         from "@ghostxd/state-capsule-sdk";
 import { StateCapsuleMemory, withCapsuleMemory } from "../src/index.js";
 
 describe("langchain adapter smoke", () => {
